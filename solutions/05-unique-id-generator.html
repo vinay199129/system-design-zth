@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Unique ID Generator -- System Design Solution | System Design Zero to Hero</title>
+<meta name="description" content="Unique ID Generator system design solution with architecture diagrams, API design, data model, estimation, and trade-off analysis. Part of System Design Zero to Hero course.">
+<meta name="keywords" content="Unique ID Generator, system design, architecture, distributed systems, interview prep, Snowflake, Clock Sync">
+<meta property="og:title" content="Unique ID Generator -- System Design Solution">
+<meta property="og:description" content="Complete system design solution with architecture diagrams and trade-off analysis.">
+<meta property="og:type" content="article">
+<meta name="robots" content="index, follow">
+<link rel="canonical" href="https://vinay199129.github.io/system-design-zth/solutions/05-unique-id-generator.html">
+<style>
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; background: #0d1117; color: #f0f6fc; line-height: 1.7; }
+h1 { color: #58a6ff; font-size: 24px; }
+h2 { color: #58a6ff; font-size: 18px; margin-top: 24px; }
+a { color: #58a6ff; }
+pre { background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 16px; overflow-x: auto; font-size: 13px; line-height: 1.5; }
+code { font-family: 'Courier New', monospace; }
+.back { display: inline-block; margin-bottom: 16px; padding: 6px 14px; background: #21262d; border: 1px solid #30363d; border-radius: 6px; color: #f0f6fc; text-decoration: none; font-size: 13px; }
+.back:hover { background: #30363d; }
+.badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; margin-left: 8px; }
+footer { margin-top: 40px; padding-top: 16px; border-top: 1px solid #30363d; font-size: 12px; color: #9198a1; text-align: center; }
+</style>
+</head>
+<body>
+<a class="back" href="../index.html">&larr; Back to Dashboard</a>
+<h1>Unique ID Generator<span class="badge" style="background:rgba(88,166,255,.15);color:#58a6ff;">Easy-Med</span></h1>
+<p style="color:#9198a1;font-size:13px;">Concepts: Snowflake, Clock Sync &middot; Companies: Twitter, Meta</p>
+<h2>Solution</h2>
+<pre><code># Solution: Design a Unique ID Generator
+
+## 1. Requirements &amp; Estimation
+
+### Functional Requirements
+
+- Generate globally unique 64-bit integer IDs
+- IDs must be roughly time-sortable
+- No single point of failure or centralized coordination
+- Support 10K+ IDs per second per server
+
+### Non-Functional Requirements
+
+- Sub-millisecond generation latency
+- Zero collisions — guaranteed uniqueness
+- Availability: 99.999%
+- IDs are numeric and fit in a 64-bit integer
+
+### Estimation
+
+| Metric | Calculation | Result |
+|--------|-------------|--------|
+| Total IDs/sec | 1000 nodes × 10K | 10M IDs/sec |
+| IDs per ms per node | 10K / 1000 | 10 IDs/ms |
+| Bits for timestamp (69 yrs) | ceil(log2(69×365×24×3600×1000)) | 41 bits |
+| Bits for machine ID | ceil(log2(1024)) | 10 bits |
+| Bits for sequence | 64 - 1 - 41 - 10 | 12 bits (4096/ms) |
+
+## 2. High-Level Design
+
+```mermaid
+graph TB
+    subgraph ID Structure - 64 bits
+        B0[0\nSign\n1 bit] --&gt; B1[Timestamp\n41 bits]
+        B1 --&gt; B2[Machine ID\n10 bits]
+        B2 --&gt; B3[Sequence\n12 bits]
+    end
+
+    AppServer1[App Server 1\nMachine ID: 001] --&gt;|generate| IDGen1[ID Generator]
+    AppServer2[App Server 2\nMachine ID: 002] --&gt;|generate| IDGen2[ID Generator]
+    AppServer3[App Server 3\nMachine ID: 003] --&gt;|generate| IDGen3[ID Generator]
+    ZK[ZooKeeper / Etcd] --&gt;|assign machine IDs| AppServer1
+    ZK --&gt;|assign machine IDs| AppServer2
+    ZK --&gt;|assign machine IDs| AppServer3
+```
+
+### ID Bit Layout (Snowflake-style)
+
+| Segment | Bits | Range | Purpose |
+|---------|------|-------|---------|
+| Sign bit | 1 | Always 0 | Keeps IDs positive |
+| Timestamp | 41 | 2^41 ms ≈ 69 years | Milliseconds since custom epoch |
+| Machine ID | 10 | 0-1023 | Unique per server |
+| Sequence | 12 | 0-4095 | Per-millisecond counter |
+
+**Custom epoch:** Instead of Unix epoch (1970), use a recent date (e.g., 2024-01-01) to maximize the 69-year window.
+
+## 3. API Design
+
+### Internal Library Call
+
+```python
+id_generator = SnowflakeGenerator(machine_id=42)
+new_id = id_generator.next_id()  # Returns: 7192837465102938112
+```
+
+### ID Decomposition (for debugging)
+
+```python
+def decompose(id: int) -&gt; dict:
+    timestamp = (id &gt;&gt; 22) + CUSTOM_EPOCH
+    machine_id = (id &gt;&gt; 12) &amp; 0x3FF
+    sequence = id &amp; 0xFFF
+    return {
+        &quot;timestamp&quot;: datetime.fromtimestamp(timestamp / 1000),
+        &quot;machine_id&quot;: machine_id,
+        &quot;sequence&quot;: sequence
+    }
+```
+
+## 4. Data Model
+
+This system generates IDs in-memory — no persistent storage is needed for the ID generation itself. The only external state is machine ID assignment.
+
+### Machine ID Registry (ZooKeeper/Etcd)
+
+| Path | Value | Notes |
+|------|-------|-------|
+| `/id-gen/machines/001` | `server-a.prod` | Lease-based assignment |
+| `/id-gen/machines/002` | `server-b.prod` | Expires if node dies |
+
+## 5. Detailed Design
+
+### Snowflake Algorithm Implementation
+
+```
+function next_id():
+    current_time = now() - CUSTOM_EPOCH  // ms since epoch
+
+    if current_time == last_time:
+        sequence = (sequence + 1) &amp; 0xFFF  // 4095 max
+        if sequence == 0:
+            // Exhausted 4096 IDs this ms — wait for next ms
+            current_time = wait_until_next_ms(last_time)
+    else:
+        sequence = 0
+
+    if current_time &lt; last_time:
+        // Clock moved backward!
+        throw ClockBackwardException
+
+    last_time = current_time
+    return (current_time &lt;&lt; 22) | (machine_id &lt;&lt; 12) | sequence
+```
+
+### Clock Backward Handling
+
+NTP can cause the system clock to jump backward. Strategies:
+
+| Strategy | How | Trade-off |
+|----------|-----|-----------|
+| Throw error | Refuse to generate IDs until clock catches up | Causes downtime |
+| Wait | Sleep until `last_time` is reached | Minor latency spike |
+| Extra bits | Reserve 2-3 bits as a &quot;clock sequence&quot; that increments on backward jumps | Fewer bits for other segments |
+
+**Recommended:** Wait for short drifts (&lt; 5ms). Alert + refuse for large drifts (&gt; 5ms).
+
+### Machine ID Assignment
+
+| Approach | Pros | Cons |
+|----------|------|------|
+| ZooKeeper/Etcd lease | Automatic recycling, no manual config | External dependency |
+| Config file | Simple, no dependency | Manual management |
+| MAC address hash | Zero coordination | Collision risk |
+
+**Recommended:** ZooKeeper with ephemeral nodes. Each server acquires a lease on startup. If it crashes, the lease expires and the ID is recycled.
+
+### Alternative Approaches Comparison
+
+| Approach | Uniqueness | Sortable | Size | Coordination |
+|----------|-----------|----------|------|-------------|
+| UUID v4 | Probabilistic | No | 128 bits | None |
+| Snowflake | Guaranteed | Yes (rough) | 64 bits | Machine ID only |
+| ULID | Probabilistic | Yes (rough) | 128 bits | None |
+| DB auto-increment | Guaranteed | Yes (strict) | 64 bits | Centralized |
+| DB ticket server | Guaranteed | Yes (strict) | 64 bits | 2 servers |
+
+### Multi-Datacenter Extension
+
+Split the machine ID into datacenter ID + machine ID:
+
+| Segment | Bits | Range |
+|---------|------|-------|
+| Datacenter ID | 5 | 0-31 (32 DCs) |
+| Machine ID | 5 | 0-31 (32 per DC) |
+
+This reduces to 32 machines per datacenter but supports 32 datacenters.
+
+## 6. Scaling &amp; Trade-offs
+
+### Bottlenecks
+
+| Bottleneck | Mitigation |
+|------------|------------|
+| 4096 IDs/ms per machine | Sufficient for most workloads; add machines if needed |
+| Clock drift between servers | NTP with tight synchronization (&lt; 5ms) |
+| Machine ID exhaustion (1024) | Split into DC + machine bits; use ZooKeeper leases |
+| Single-ms burst &gt; 4096 | Wait for next millisecond (adds &lt;1ms latency) |
+
+### Trade-offs
+
+| Decision | Trade-off |
+|----------|-----------|
+| 41-bit timestamp vs more sequence bits | Longer lifespan (69 yrs) vs more IDs per ms |
+| Snowflake vs UUID | Compact and sortable, but requires machine ID coordination |
+| Custom epoch | Maximizes time range but all systems must agree on it |
+| ZK for machine IDs | Automatic management but adds external dependency |
+
+### Future Improvements
+
+- **Embedded metadata:** Encode entity type or shard ID in unused bits for routing.
+- **Monotonic within a node:** Guarantee strict ordering per machine (useful for event sourcing).
+- **ID prediction protection:** Add randomized lower bits to prevent ID enumeration attacks.
+- **Time-based partitioning:** Use the timestamp prefix for efficient time-range queries in the database.
+- **Graceful degradation:** If ZK is down, fall back to random machine IDs with collision detection.
+</code></pre>
+<footer>
+<p><strong>System Design Zero to Hero</strong> &copy; 2026 <a href="https://github.com/vinay199129">Vinay Bhadauria</a></p>
+<p><a href="https://vinay199129.github.io/system-design-zth/">Full Course Dashboard</a> &middot; <a href="https://github.com/vinay199129/system-design-zth">GitHub</a></p>
+</footer>
+</body>
+</html>

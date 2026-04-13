@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>YouTube / Video Streaming -- System Design Solution | System Design Zero to Hero</title>
+<meta name="description" content="YouTube / Video Streaming system design solution with architecture diagrams, API design, data model, estimation, and trade-off analysis. Part of System Design Zero to Hero course.">
+<meta name="keywords" content="YouTube / Video Streaming, system design, architecture, distributed systems, interview prep, Transcoding, ABR, CDN">
+<meta property="og:title" content="YouTube / Video Streaming -- System Design Solution">
+<meta property="og:description" content="Complete system design solution with architecture diagrams and trade-off analysis.">
+<meta property="og:type" content="article">
+<meta name="robots" content="index, follow">
+<link rel="canonical" href="https://vinay199129.github.io/system-design-zth/solutions/02-youtube.html">
+<style>
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; background: #0d1117; color: #f0f6fc; line-height: 1.7; }
+h1 { color: #58a6ff; font-size: 24px; }
+h2 { color: #58a6ff; font-size: 18px; margin-top: 24px; }
+a { color: #58a6ff; }
+pre { background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 16px; overflow-x: auto; font-size: 13px; line-height: 1.5; }
+code { font-family: 'Courier New', monospace; }
+.back { display: inline-block; margin-bottom: 16px; padding: 6px 14px; background: #21262d; border: 1px solid #30363d; border-radius: 6px; color: #f0f6fc; text-decoration: none; font-size: 13px; }
+.back:hover { background: #30363d; }
+.badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; margin-left: 8px; }
+footer { margin-top: 40px; padding-top: 16px; border-top: 1px solid #30363d; font-size: 12px; color: #9198a1; text-align: center; }
+</style>
+</head>
+<body>
+<a class="back" href="../index.html">&larr; Back to Dashboard</a>
+<h1>YouTube / Video Streaming<span class="badge" style="background:rgba(88,166,255,.15);color:#58a6ff;">Hard</span></h1>
+<p style="color:#9198a1;font-size:13px;">Concepts: Transcoding, ABR, CDN &middot; Companies: Google, Netflix</p>
+<h2>Solution</h2>
+<pre><code># Solution: Design YouTube / Video Streaming
+
+## 1. Requirements &amp; Estimation
+
+### Traffic Estimates
+
+- **DAU:** 800M users
+- **Video uploads:** 500 hours/min → ~30,000 hours/day → ~4,300 videos/min (avg 7 min each)
+- **Concurrent streams (peak):** 50M
+- **Search queries:** 3B/day → ~35,000/sec
+
+### Storage Estimates
+
+- **Original video:** 1.5 GB average
+- **Transcoded variants:** 10-15 per video (resolutions × codecs) → ~10 GB per video total
+- **Daily new storage:** 4,300 videos/min × 1,440 min × 10 GB = **62 PB/day**
+- **Total stored:** 1+ exabyte
+
+### Bandwidth Estimates
+
+- **Upload ingress:** ~4.5 GB/sec
+- **Streaming egress:** 50M viewers × 5 Mbps average = **250 Tbps** (mostly served from CDN edge)
+
+## 2. High-Level Design
+
+```mermaid
+graph TB
+    Client[Client Player] --&gt; CDN[CDN Edge Nodes]
+    Client --&gt; LB[Load Balancer]
+
+    LB --&gt; API[API Gateway]
+    API --&gt; UpSvc[Upload Service]
+    API --&gt; StreamSvc[Streaming Service]
+    API --&gt; SearchSvc[Search Service]
+    API --&gt; RecSvc[Recommendation Service]
+
+    UpSvc --&gt; ObjStore[(Object Storage S3)]
+    UpSvc --&gt; TransQ[Transcoding Queue Kafka]
+
+    TransQ --&gt; Orchestrator[DAG Orchestrator]
+    Orchestrator --&gt; T1[Video Transcoder]
+    Orchestrator --&gt; T2[Thumbnail Generator]
+    Orchestrator --&gt; T3[Audio Extractor]
+    Orchestrator --&gt; T4[Content Moderator]
+
+    T1 --&gt; ObjStore
+    T2 --&gt; ObjStore
+
+    StreamSvc --&gt; ObjStore
+    StreamSvc --&gt; CDN
+
+    SearchSvc --&gt; ES[(Elasticsearch)]
+    RecSvc --&gt; RecDB[(Feature Store)]
+    RecSvc --&gt; MetaDB[(Metadata DB)]
+
+    Orchestrator --&gt; MetaDB
+```
+
+## 3. API Design
+
+### Upload Video (Chunked Resumable)
+
+```
+POST /api/v1/videos/upload/init
+Body: { title, description, tags[], file_size, content_type }
+Response: 201 { upload_id, chunk_size: 8MB, upload_url }
+
+PUT /api/v1/videos/upload/{upload_id}/chunks/{chunk_number}
+Body: &lt;binary chunk&gt;
+Response: 200 { received_bytes, status }
+
+POST /api/v1/videos/upload/{upload_id}/complete
+Response: 202 { video_id, status: &quot;processing&quot; }
+```
+
+### Stream Video
+
+```
+GET /api/v1/videos/{video_id}/manifest.m3u8
+Response: 200 (HLS master playlist with available quality levels)
+
+GET /api/v1/videos/{video_id}/segments/{quality}/{segment_number}.ts
+Response: 200 (binary video segment, served from CDN)
+```
+
+### Search
+
+```
+GET /api/v1/search?q=&lt;query&gt;&amp;cursor=&lt;token&gt;&amp;limit=20
+Response: 200 { results: [...], next_cursor }
+```
+
+## 4. Data Model
+
+### Videos Table (PostgreSQL, sharded by video_id)
+
+| Column | Type | Notes |
+|--------|------|-------|
+| video_id | BIGINT (Snowflake) | Primary key |
+| creator_id | BIGINT | FK to users |
+| title | VARCHAR(100) | Indexed for search |
+| description | TEXT | |
+| duration_sec | INT | |
+| status | ENUM | uploading, processing, active, removed |
+| storage_key | VARCHAR | S3 prefix for all variants |
+| created_at | TIMESTAMP | Indexed |
+| view_count | BIGINT | Approximate, updated async |
+
+### Video Variants Table
+
+| Column | Type | Notes |
+|--------|------|-------|
+| video_id | BIGINT | FK |
+| resolution | VARCHAR | 144p, 360p, 720p, 1080p, 4K |
+| codec | VARCHAR | h264, vp9, av1 |
+| bitrate_kbps | INT | |
+| segment_count | INT | Number of HLS/DASH segments |
+| storage_key | VARCHAR | S3 path to manifest + segments |
+
+### View Counts (Redis + Cassandra)
+
+- **Redis:** Real-time approximate counter per video (HyperLogLog for unique views).
+- **Cassandra:** Periodic flush of aggregated view counts (time-series, partitioned by video_id + date).
+
+## 5. Detailed Design
+
+### Video Transcoding Pipeline Deep Dive
+
+The transcoding pipeline is modeled as a **Directed Acyclic Graph (DAG)** of tasks:
+
+```mermaid
+graph TD
+    Upload[Upload Complete] --&gt; Validate[Validate Format]
+    Validate --&gt; Split[Split into Segments]
+    Split --&gt; T720[Transcode 720p H.264]
+    Split --&gt; T1080[Transcode 1080p H.264]
+    Split --&gt; T4K[Transcode 4K VP9]
+    Split --&gt; T360[Transcode 360p H.264]
+    Split --&gt; Audio[Extract Audio]
+    Split --&gt; Thumb[Generate Thumbnails]
+    Validate --&gt; Moderate[Content Moderation AI]
+
+    T720 --&gt; Manifest[Generate HLS Manifest]
+    T1080 --&gt; Manifest
+    T4K --&gt; Manifest
+    T360 --&gt; Manifest
+    Audio --&gt; Manifest
+
+    Manifest --&gt; Publish[Publish to CDN]
+    Moderate --&gt; Publish
+    Thumb --&gt; Publish
+```
+
+**Orchestration details:**
+
+1. **Upload Complete** triggers a Kafka message.
+2. **DAG Orchestrator** (custom, or Apache Airflow) creates a task graph per video.
+3. Tasks that can run in parallel do so (all transcodes run simultaneously).
+4. Each task is idempotent — if a 720p transcode fails, only that task is retried.
+5. **Content Moderation** runs in parallel with transcoding; if it flags the video, publication is blocked.
+6. A single video produces 10-15 variants: (144p, 360p, 480p, 720p, 1080p, 4K) × (H.264, VP9) minus 4K H.264.
+7. Each variant is split into **2-10 second segments** for adaptive streaming.
+8. **HLS manifest** (`.m3u8`) lists available quality levels and segment URLs.
+
+**Failure handling:** Each task has 3 retries with exponential backoff. Persistent failures move the video to a &quot;manual review&quot; queue. The orchestrator tracks task state in a relational DB.
+
+### Adaptive Bitrate Streaming Deep Dive
+
+1. Client requests the **master manifest** (`manifest.m3u8`), which lists available quality levels.
+2. Client's ABR algorithm selects an initial quality based on detected bandwidth.
+3. Client requests **segments** sequentially (each 2-10 seconds of video).
+4. After each segment download, the client measures:
+   - Download speed (bytes/time).
+   - Buffer occupancy (seconds of video buffered ahead).
+5. If bandwidth drops, the next segment is requested at a lower quality.
+6. If bandwidth improves and buffer is healthy, quality increases.
+
+**CDN strategy:**
+- **Hot content** (top 10% by views, last 48 hours): Pre-warmed on all edge nodes globally.
+- **Warm content** (next 30%): Cached on regional CDN nodes, pulled from origin on first request per region.
+- **Cold content** (long tail, 60%): Served directly from origin (S3) or a single CDN shield node.
+- **Origin shield:** A mid-tier CDN layer that absorbs cache misses from edge, preventing thundering herd on origin.
+
+### Recommendation Engine Deep Dive
+
+The recommendation system generates the home page feed:
+
+1. **Candidate generation:** Two parallel pipelines:
+   - **Collaborative filtering:** Matrix factorization on the user-video interaction matrix (watch history, likes, subscriptions).
+   - **Content-based:** Video embeddings (title, tags, visual features from CNN) matched to user preference vectors.
+2. **Scoring/ranking:** A neural network model scores each candidate video with features including:
+   - Predicted watch time (primary objective).
+   - Click-through rate probability.
+   - User-creator affinity (subscription, past watch ratio).
+   - Video freshness and quality signals.
+3. **Re-ranking:** Business rules applied (diversity, freshness boost, creator fairness, demotion of clickbait).
+4. **Serving:** Top-K results cached per user in Redis, refreshed every 30 minutes or on user action.
+
+## 6. Scaling &amp; Trade-offs
+
+### Bottlenecks &amp; Mitigations
+
+| Bottleneck | Mitigation |
+|-----------|------------|
+| Transcoding compute cost | Spot/preemptible instances for non-urgent transcoding; priority queue for popular creators |
+| CDN bandwidth (250 Tbps) | Multi-CDN strategy; direct peering with major ISPs; adaptive bitrate reduces wasted bandwidth |
+| View count accuracy | HyperLogLog for approximate unique views; batch reconciliation for exact counts |
+| Search index freshness | Near-real-time indexing pipeline; new videos searchable within 60 seconds |
+| Storage cost (exabyte scale) | Tiered storage; remove low-quality variants for unwatched videos after 1 year |
+
+### Key Trade-offs
+
+- **Transcoding breadth vs. cost:** More variants = better viewer experience but higher storage and compute cost. Start with 6 key variants; add others based on demand.
+- **CDN caching vs. freshness:** Aggressive caching saves egress cost but delays new content propagation. Solution: short TTL (5 min) for manifests, long TTL (1 year, immutable) for segments.
+- **Recommendation relevance vs. exploration:** Optimizing purely for watch time creates filter bubbles. The re-ranking step deliberately injects diverse content.
+
+### Future Improvements
+
+- **Live streaming:** Add a real-time ingest pipeline (RTMP → HLS/DASH transcoding in real time).
+- **AV1 codec migration:** 30% bitrate savings over VP9, reducing CDN costs significantly.
+- **Edge computing:** Run lightweight recommendation models at CDN edge for personalized thumbnail selection.
+- **Shorts/vertical video:** Separate pipeline optimized for short-form content with different caching and recommendation strategies.
+</code></pre>
+<footer>
+<p><strong>System Design Zero to Hero</strong> &copy; 2026 <a href="https://github.com/vinay199129">Vinay Bhadauria</a></p>
+<p><a href="https://vinay199129.github.io/system-design-zth/">Full Course Dashboard</a> &middot; <a href="https://github.com/vinay199129/system-design-zth">GitHub</a></p>
+</footer>
+</body>
+</html>

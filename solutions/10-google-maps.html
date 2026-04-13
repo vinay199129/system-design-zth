@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Google Maps -- System Design Solution | System Design Zero to Hero</title>
+<meta name="description" content="Google Maps system design solution with architecture diagrams, API design, data model, estimation, and trade-off analysis. Part of System Design Zero to Hero course.">
+<meta name="keywords" content="Google Maps, system design, architecture, distributed systems, interview prep, Geospatial, Routing, Tiles">
+<meta property="og:title" content="Google Maps -- System Design Solution">
+<meta property="og:description" content="Complete system design solution with architecture diagrams and trade-off analysis.">
+<meta property="og:type" content="article">
+<meta name="robots" content="index, follow">
+<link rel="canonical" href="https://vinay199129.github.io/system-design-zth/solutions/10-google-maps.html">
+<style>
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; background: #0d1117; color: #f0f6fc; line-height: 1.7; }
+h1 { color: #58a6ff; font-size: 24px; }
+h2 { color: #58a6ff; font-size: 18px; margin-top: 24px; }
+a { color: #58a6ff; }
+pre { background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 16px; overflow-x: auto; font-size: 13px; line-height: 1.5; }
+code { font-family: 'Courier New', monospace; }
+.back { display: inline-block; margin-bottom: 16px; padding: 6px 14px; background: #21262d; border: 1px solid #30363d; border-radius: 6px; color: #f0f6fc; text-decoration: none; font-size: 13px; }
+.back:hover { background: #30363d; }
+.badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; margin-left: 8px; }
+footer { margin-top: 40px; padding-top: 16px; border-top: 1px solid #30363d; font-size: 12px; color: #9198a1; text-align: center; }
+</style>
+</head>
+<body>
+<a class="back" href="../index.html">&larr; Back to Dashboard</a>
+<h1>Google Maps<span class="badge" style="background:rgba(88,166,255,.15);color:#58a6ff;">Hard</span></h1>
+<p style="color:#9198a1;font-size:13px;">Concepts: Geospatial, Routing, Tiles &middot; Companies: Google, Uber</p>
+<h2>Solution</h2>
+<pre><code># Solution: Design Google Maps
+
+## 1. Requirements &amp; Estimation
+
+### Traffic Estimates
+
+- **MAU:** 1B users
+- **Map tile requests/sec:** 5M (users pan, zoom, scroll)
+- **Route calculation requests/sec:** 100,000
+- **Navigation sessions (concurrent):** 10M
+- **GPS probes/sec (for traffic):** 10M from active drivers/navigators
+
+### Storage Estimates
+
+- **Map tiles (all zoom levels):** ~50 PB
+  - Zoom level 21: ~4.4 trillion tiles × 30 KB avg = ~132 PB (but sparse — only populated areas rendered)
+  - Practical storage with sparse rendering: ~50 PB
+- **Road network graph:** 500M nodes × 200 bytes + 1B edges × 100 bytes = ~200 GB (fits in memory across a cluster)
+- **Traffic time-series:** 10M GPS probes/sec × 50 bytes × 86,400 sec = **~43 TB/day**
+- **Historical traffic data (for ETA model):** ~5 PB (years of aggregated data)
+
+### Bandwidth Estimates
+
+- **Tile serving:** 5M req/sec × 30 KB = ~150 GB/sec (almost entirely from CDN edge)
+- **GPS probe ingress:** 10M/sec × 50 bytes = ~500 MB/sec
+- **Route responses:** 100K/sec × 5 KB = ~500 MB/sec
+
+## 2. High-Level Design
+
+```mermaid
+graph TB
+    Client[Mobile/Web Client] --&gt; CDN[CDN Edge Tile Cache]
+    Client --&gt; LB[Load Balancer]
+
+    LB --&gt; API[API Gateway]
+    API --&gt; TileSvc[Tile Serving Service]
+    API --&gt; RouteSvc[Routing Service]
+    API --&gt; SearchSvc[Place Search Service]
+    API --&gt; NavSvc[Navigation Service]
+    API --&gt; TrafficSvc[Traffic Service]
+
+    TileSvc --&gt; TileStore[(Tile Storage S3)]
+    TileSvc --&gt; CDN
+
+    RouteSvc --&gt; GraphStore[(Road Graph In-Memory Cluster)]
+    RouteSvc --&gt; TrafficSvc
+
+    SearchSvc --&gt; PlaceIdx[(Place Index Elasticsearch)]
+    SearchSvc --&gt; Geocoder[Geocoding Service]
+
+    NavSvc --&gt; RouteSvc
+    NavSvc --&gt; TrafficSvc
+    NavSvc --&gt; WS[WebSocket Gateway]
+    WS --&gt; Client
+
+    TrafficSvc --&gt; ProbeStream[GPS Probe Stream Kafka]
+    ProbeStream --&gt; TrafficAgg[Traffic Aggregator Flink]
+    TrafficAgg --&gt; TrafficDB[(Traffic Speed Store)]
+    TrafficAgg --&gt; GraphStore
+```
+
+## 3. API Design
+
+### Get Map Tiles
+
+```
+GET /tiles/{style}/{zoom}/{x}/{y}.pbf
+Response: 200 (binary protobuf vector tile, served from CDN)
+Cache-Control: public, max-age=86400 (for base map tiles)
+```
+
+### Get Directions
+
+```
+GET /api/v1/directions?origin=37.7749,-122.4194&amp;destination=37.3382,-121.8863
+    &amp;mode=driving&amp;departure_time=now&amp;alternatives=true
+Response: 200 {
+  routes: [{
+    distance_meters: 77200,
+    duration_seconds: 3480,
+    duration_in_traffic_seconds: 4200,
+    polyline: &quot;encoded_polyline_string&quot;,
+    steps: [{ instruction, distance, duration, polyline }],
+    warnings: []
+  }],
+  traffic_model: &quot;best_guess&quot;
+}
+```
+
+### Start Navigation Session
+
+```
+POST /api/v1/navigation/start
+Body: { route_id, current_location: {lat, lng} }
+Response: 200 { session_id, ws_url: &quot;wss://nav.maps.com/session/&lt;id&gt;&quot; }
+
+WebSocket messages (server → client):
+{ type: &quot;guidance&quot;, next_step: {...}, eta_seconds: 2340, reroute: false }
+{ type: &quot;reroute&quot;, new_route: {...}, reason: &quot;traffic_ahead&quot; }
+```
+
+### Search Places
+
+```
+GET /api/v1/places/search?q=coffee&amp;location=37.7749,-122.4194&amp;radius=1000
+Response: 200 { results: [{ place_id, name, address, lat, lng, rating, distance_m }] }
+```
+
+## 4. Data Model
+
+### Road Network Graph (In-Memory, partitioned by region)
+
+**Node (intersection/waypoint):**
+```
+struct Node {
+    node_id: u64,
+    lat: f64,
+    lng: f64,
+    edges: Vec&lt;EdgeRef&gt;,  // outgoing edges
+}
+```
+
+**Edge (road segment):**
+```
+struct Edge {
+    edge_id: u64,
+    source_node: u64,
+    target_node: u64,
+    distance_meters: u32,
+    base_travel_time_sec: u16,      // speed limit based
+    current_travel_time_sec: u16,   // live traffic adjusted
+    road_class: enum { HIGHWAY, ARTERIAL, LOCAL, RESIDENTIAL },
+    is_one_way: bool,
+    restrictions: Vec&lt;Restriction&gt;,  // no left turn, time-based, etc.
+}
+```
+
+### Map Tiles (Object Storage)
+
+```
+Path: /tiles/{style}/{zoom}/{x}/{y}.pbf
+Style: driving | satellite | terrain | transit
+Zoom: 0-21
+Tile format: Mapbox Vector Tile (MVT) protobuf
+```
+
+### Traffic Speed Data (Time-Series Store)
+
+| Column | Type | Notes |
+|--------|------|-------|
+| edge_id | BIGINT | Road segment |
+| timestamp | TIMESTAMP | 1-minute bucket |
+| avg_speed_kmh | FLOAT | Average speed from GPS probes |
+| sample_count | INT | Number of probes (confidence indicator) |
+| confidence | FLOAT | Statistical confidence in the speed estimate |
+
+## 5. Detailed Design
+
+### Geospatial Tile System Deep Dive
+
+The world map is rendered as a pyramid of tiles using the **Web Mercator** projection:
+
+**Tile addressing (Slippy Map convention):**
+- At zoom level `z`, the world is divided into `2^z × 2^z` tiles.
+- Zoom 0: 1 tile (entire world). Zoom 10: ~1M tiles. Zoom 21: ~4.4 trillion tiles.
+- Tile address: `(z, x, y)` where `x` and `y` are column and row indices.
+
+**Vector tiles vs. raster tiles:**
+- **Raster:** Pre-rendered PNG/JPEG images. Simple to serve but fixed style, large storage.
+- **Vector:** Protocol buffer containing geometric shapes + metadata. Client renders locally. Smaller files, dynamic styling, rotation/tilt support.
+- Google Maps uses **vector tiles** on mobile (smaller bandwidth, interactive) and raster tiles as fallback.
+
+**Tile generation pipeline:**
+1. Raw map data (OpenStreetMap or proprietary) is processed into styled layers (roads, buildings, water, labels).
+2. Each layer is clipped to tile boundaries and encoded as MVT protobuf.
+3. Tiles are stored in object storage (S3) with the path convention: `/{style}/{z}/{x}/{y}.pbf`.
+4. Popular tiles (zoom 0-14, urban areas) are pre-rendered. Deep zoom tiles (15-21) for rural areas are rendered on-demand and cached.
+
+**CDN strategy:**
+- Base map tiles rarely change → long cache TTL (24 hours for zoom 0-14, 1 hour for zoom 15+).
+- Traffic overlay tiles change every 1-2 minutes → short TTL (60 seconds) or served directly from the traffic service.
+- CDN hit rate: &gt;95% for base tiles (most requests are for the same popular areas).
+
+### Graph-Based Routing Deep Dive
+
+**The problem:** Find the shortest/fastest path between two points on a graph with 500M nodes and 1B edges. Dijkstra's algorithm is O((V + E) log V) — too slow for a graph this size (would take seconds).
+
+**Solution: Contraction Hierarchies (CH)**
+
+**Pre-processing phase (offline, runs daily):**
+1. Assign an &quot;importance&quot; score to each node (based on edge density, road class, etc.).
+2. Contract nodes from least important to most important:
+   - Remove the node from the graph.
+   - For each pair of (u, v) that used the removed node as a shortest path waypoint, add a **shortcut edge** directly from u to v with weight = dist(u, removed) + dist(removed, v).
+   - This shortcut preserves shortest-path distances.
+3. Result: a hierarchical graph where highways have shortcuts that skip over many local intersections.
+
+**Query phase (online, &lt;100ms):**
+1. Run a **bidirectional Dijkstra** — one search forward from the origin, one backward from the destination.
+2. Both searches only relax edges toward &quot;more important&quot; nodes (upward in the hierarchy).
+3. The searches meet in the middle at a high-importance node (typically a highway junction).
+4. The actual path is reconstructed by &quot;unpacking&quot; shortcut edges.
+
+**Performance:** Pre-processing takes hours for a continent-sized graph. But query time drops from seconds to **&lt;10ms** for most routes.
+
+**Handling live traffic:** CH shortcuts are pre-computed with base travel times. To incorporate live traffic:
+- **Customizable CH:** Separate the graph topology (fixed) from edge weights (variable). Update only the weights when traffic changes. Re-run a lightweight &quot;customization&quot; pass (~30 seconds for a country-sized graph) to update shortcut weights.
+- Customization runs every 5 minutes with latest traffic speeds.
+
+### ETA Prediction Deep Dive
+
+Accurate ETA combines multiple data sources:
+
+**Real-time traffic ingestion:**
+1. Every navigating user's phone sends GPS probes every 3 seconds.
+2. Probes are published to Kafka (10M/sec).
+3. **Traffic Aggregator** (Flink) processes probes in 1-minute windows:
+   - Maps each probe to the nearest road segment (map matching).
+   - Computes average speed per edge per minute.
+   - Publishes updated edge speeds to the graph store.
+
+**ETA model:**
+```
+ETA = Σ(edge_travel_time) for all edges in the route
+```
+
+Where `edge_travel_time` is determined by:
+
+| Priority | Source | Usage |
+|----------|--------|-------|
+| 1 | Live traffic speed | If ≥10 probes in last 5 min (high confidence) |
+| 2 | Historical pattern | Same day-of-week, time-of-day from past 8 weeks |
+| 3 | Road speed limit | Fallback when no data available |
+
+**ML adjustments:** A gradient-boosted model applies corrections for:
+- Weather conditions (rain → +15% travel time).
+- Events (stadium event ending → +30% on nearby roads).
+- Road construction zones.
+- Time-of-day traffic pattern transitions (traffic building up → ETA increases progressively).
+
+**Rerouting during navigation:**
+1. Every 30 seconds, the Navigation Service checks if a faster route exists.
+2. Compares current ETA (remaining) with ETA via alternative routes.
+3. If an alternative saves &gt;10% time, suggest reroute to the user.
+4. Rerouting must feel smooth — avoid oscillating between routes (hysteresis threshold).
+
+### Place Search &amp; Geocoding Deep Dive
+
+**Geocoding** (address → coordinates):
+- A specialized index maps structured addresses (street, city, postal code) to lat/lng.
+- Fuzzy matching handles typos and partial addresses.
+- Reverse geocoding (coordinates → address) uses a spatial index (R-tree) to find the nearest address point.
+
+**Place search** (&quot;coffee near me&quot;):
+- **Elasticsearch index** with fields: name, category, lat/lng, rating, hours, price_level.
+- Query: bool query combining text match (name/category) with geo_distance filter.
+- Ranking: relevance × proximity × rating × popularity.
+- Index updated in real-time as businesses update their information.
+
+## 6. Scaling &amp; Trade-offs
+
+### Bottlenecks &amp; Mitigations
+
+| Bottleneck | Mitigation |
+|-----------|------------|
+| Tile storage (50 PB) | Sparse rendering: only generate deep-zoom tiles for populated areas; on-demand rendering for rare tiles |
+| Routing latency | Contraction hierarchies: &lt;10ms per query; partition graph by region for memory locality |
+| GPS probe volume (10M/sec) | Kafka with 100+ partitions; Flink stateful processing with checkpoints |
+| CDN bandwidth for tiles | Vector tiles (5× smaller than raster); aggressive caching (&gt;95% hit rate) |
+| Real-time traffic freshness | 1-minute aggregation windows; customizable CH update every 5 minutes |
+
+### Key Trade-offs
+
+- **Pre-computed vs. on-demand routing:** Pre-computing all possible routes is impossible (O(N²)). On-demand is feasible with Contraction Hierarchies (&lt;10ms). Trade-off is the pre-processing time for CH (hours) and the delay in incorporating live traffic (5-minute lag).
+- **Vector vs. raster tiles:** Vector tiles are smaller and more flexible but require client-side rendering (CPU/GPU intensive on low-end devices). Raster tiles are larger but render instantly. Solution: vector for modern devices, raster fallback for older ones.
+- **ETA accuracy vs. privacy:** More GPS probes = better traffic data = better ETA. But collecting fine-grained location data raises privacy concerns. Mitigation: aggregate probes (never store individual user trajectories), differential privacy for low-traffic roads.
+
+### Future Improvements
+
+- **3D building rendering:** Use photogrammetry data for immersive 3D map views.
+- **Augmented reality navigation:** Overlay turn-by-turn directions on the camera view (Google Live View).
+- **Multi-modal routing:** Combine driving, walking, cycling, and public transit into a single optimal route.
+- **Predictive routing:** Pre-compute likely routes based on user's calendar and commute patterns.
+- **Indoor maps:** Map building interiors (malls, airports) with indoor positioning (Wi-Fi, BLE beacons).
+</code></pre>
+<footer>
+<p><strong>System Design Zero to Hero</strong> &copy; 2026 <a href="https://github.com/vinay199129">Vinay Bhadauria</a></p>
+<p><a href="https://vinay199129.github.io/system-design-zth/">Full Course Dashboard</a> &middot; <a href="https://github.com/vinay199129/system-design-zth">GitHub</a></p>
+</footer>
+</body>
+</html>

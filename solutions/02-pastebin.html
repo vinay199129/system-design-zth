@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pastebin -- System Design Solution | System Design Zero to Hero</title>
+<meta name="description" content="Pastebin system design solution with architecture diagrams, API design, data model, estimation, and trade-off analysis. Part of System Design Zero to Hero course.">
+<meta name="keywords" content="Pastebin, system design, architecture, distributed systems, interview prep, Blob Storage, TTL">
+<meta property="og:title" content="Pastebin -- System Design Solution">
+<meta property="og:description" content="Complete system design solution with architecture diagrams and trade-off analysis.">
+<meta property="og:type" content="article">
+<meta name="robots" content="index, follow">
+<link rel="canonical" href="https://vinay199129.github.io/system-design-zth/solutions/02-pastebin.html">
+<style>
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; background: #0d1117; color: #f0f6fc; line-height: 1.7; }
+h1 { color: #58a6ff; font-size: 24px; }
+h2 { color: #58a6ff; font-size: 18px; margin-top: 24px; }
+a { color: #58a6ff; }
+pre { background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 16px; overflow-x: auto; font-size: 13px; line-height: 1.5; }
+code { font-family: 'Courier New', monospace; }
+.back { display: inline-block; margin-bottom: 16px; padding: 6px 14px; background: #21262d; border: 1px solid #30363d; border-radius: 6px; color: #f0f6fc; text-decoration: none; font-size: 13px; }
+.back:hover { background: #30363d; }
+.badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; margin-left: 8px; }
+footer { margin-top: 40px; padding-top: 16px; border-top: 1px solid #30363d; font-size: 12px; color: #9198a1; text-align: center; }
+</style>
+</head>
+<body>
+<a class="back" href="../index.html">&larr; Back to Dashboard</a>
+<h1>Pastebin<span class="badge" style="background:rgba(88,166,255,.15);color:#58a6ff;">Easy</span></h1>
+<p style="color:#9198a1;font-size:13px;">Concepts: Blob Storage, TTL &middot; Companies: Google, Meta</p>
+<h2>Solution</h2>
+<pre><code># Solution: Design Pastebin
+
+## 1. Requirements &amp; Estimation
+
+### Functional Requirements
+
+- Create: Upload text content → receive a unique URL
+- Read: Visit URL → view the paste content
+- Expiration: Pastes can expire after a set duration
+- Visibility: Public (listed) or unlisted (link only)
+- Syntax highlighting: Detect or accept language hint
+
+### Non-Functional Requirements
+
+- High durability — content must never be lost
+- Low read latency (&lt; 200ms p99)
+- 99.9% availability
+- Support pastes up to 10 MB
+
+### Estimation
+
+| Metric | Calculation | Result |
+|--------|-------------|--------|
+| Write QPS | 5M / 86400 | ~58 QPS |
+| Read QPS | 58 × 5 | ~290 QPS |
+| Peak read QPS | 290 × 3 | ~870 QPS |
+| Storage / day | 5M × 10 KB | ~50 GB/day |
+| Storage / year | 50 GB × 365 | ~18 TB/year |
+| Storage (5 years) | 18 × 5 | ~90 TB |
+
+## 2. High-Level Design
+
+```mermaid
+graph LR
+    Client([Client]) --&gt; LB[Load Balancer]
+    LB --&gt; AppServer[App Server]
+    AppServer --&gt;|metadata| MetaDB[(Metadata DB)]
+    AppServer --&gt;|content| ObjectStore[(Object Storage\nS3 / Blob)]
+    AppServer --&gt; Cache[(Redis Cache)]
+    ObjectStore --&gt; CDN[CDN]
+    CDN --&gt; Client
+```
+
+### Write Path
+
+1. Client uploads text content via API.
+2. App server generates a unique paste key (via KGS or hash).
+3. Content is stored in object storage (S3) with the key as the object name.
+4. Metadata (key, user, language, expiry, size) is stored in the metadata database.
+5. Return the paste URL to the client.
+
+### Read Path
+
+1. Client requests `paste.io/{key}`.
+2. CDN serves the content if cached.
+3. On CDN miss, app server checks Redis for metadata.
+4. Fetches content from object storage.
+5. Returns content with appropriate syntax highlighting headers.
+
+## 3. API Design
+
+### Create Paste
+
+```
+POST /api/v1/pastes
+Content-Type: text/plain
+
+Body: &lt;raw text content&gt;
+
+Headers:
+  X-Language: python         // optional
+  X-Expires-In: 3600         // optional, seconds
+  X-Visibility: unlisted     // optional
+
+Response 201:
+{
+  &quot;paste_url&quot;: &quot;https://paste.io/xK9mQ2p&quot;,
+  &quot;expires_at&quot;: &quot;2026-04-15T00:00:00Z&quot;,
+  &quot;size_bytes&quot;: 4320
+}
+```
+
+### Read Paste
+
+```
+GET /{paste_key}
+
+Response 200:
+Content-Type: text/plain
+X-Language: python
+X-Created-At: 2026-04-14T00:00:00Z
+
+&lt;paste content&gt;
+```
+
+### Delete Paste
+
+```
+DELETE /api/v1/pastes/{paste_key}
+Authorization: Bearer &lt;token&gt;
+
+Response 204: No Content
+```
+
+## 4. Data Model
+
+### Metadata Table (SQL or DynamoDB)
+
+| Column | Type | Notes |
+|--------|------|-------|
+| paste_key | VARCHAR(8) | Primary key |
+| user_id | BIGINT | Creator (nullable) |
+| language | VARCHAR(20) | Syntax hint |
+| size_bytes | INT | Content size |
+| visibility | ENUM | public / unlisted |
+| created_at | TIMESTAMP | Creation time |
+| expires_at | TIMESTAMP | Expiry (nullable) |
+| content_path | VARCHAR(255) | Object storage path |
+
+### Content Storage
+
+- **Object storage (S3 / Azure Blob):** Ideal for variable-size text blobs.
+- Object key: `pastes/{paste_key}.txt`
+- Enables lifecycle policies for automatic expiration.
+- Extremely durable (99.999999999% in S3).
+
+### Why Separate Metadata from Content?
+
+| Concern | Metadata DB | Object Storage |
+|---------|-------------|----------------|
+| Size | Fixed, small (~200 bytes) | Variable (100B – 10MB) |
+| Access pattern | Index lookups, filtering | Sequential read/write |
+| Scaling | Vertical + read replicas | Horizontally infinite |
+| Cost | Higher per GB | Very low per GB |
+
+## 5. Detailed Design
+
+### Key Generation
+
+Reuse the KGS approach from URL shortener:
+
+- Pre-generate 8-character Base62 keys.
+- App servers hold local batches to avoid per-request coordination.
+- 62^8 ≈ 218 trillion possible keys — far more than needed.
+
+### Content Storage Optimization
+
+| Paste size | Strategy |
+|------------|----------|
+| &lt; 1 KB | Store inline in metadata DB (optional optimization) |
+| 1 KB – 10 MB | Store in object storage |
+| &gt; 10 MB | Reject with 413 Payload Too Large |
+
+### Caching Strategy
+
+- **CDN caching:** Paste content is immutable — set `Cache-Control: public, max-age=31536000, immutable`.
+- **Redis cache:** Cache metadata for fast lookups. LRU eviction with ~5 GB capacity.
+- **Hot paste handling:** CDN edge nodes absorb traffic spikes for viral pastes.
+
+### Paste Expiration
+
+1. **Lazy deletion:** On read, check `expires_at`. If expired, return 404 and enqueue deletion.
+2. **Active cleanup:** A background cron job runs daily:
+   - Queries metadata DB for `expires_at &lt; NOW()`.
+   - Deletes object from storage.
+   - Removes metadata record.
+3. **S3 lifecycle policy:** Set object expiration as a safety net.
+
+### Rate Limiting
+
+- Anonymous users: 10 pastes/minute by IP.
+- Authenticated users: 60 pastes/minute by user ID.
+- Reject with 429 Too Many Requests.
+
+## 6. Scaling &amp; Trade-offs
+
+### Bottlenecks
+
+| Bottleneck | Mitigation |
+|------------|------------|
+| Object storage read latency | CDN caching for immutable content |
+| Metadata DB at scale | Shard by paste_key hash; read replicas |
+| Large paste uploads | Stream uploads; enforce size limits |
+| Expired paste accumulation | Background cleanup + lifecycle policies |
+
+### Trade-offs
+
+| Decision | Trade-off |
+|----------|-----------|
+| Object storage vs DB blobs | Cheaper and more scalable, but adds a network hop |
+| Inline small pastes | Faster reads for tiny pastes, but complicates the data model |
+| CDN for all pastes | Great for popular ones, wasted for pastes read once |
+| Content deduplication | Saves storage but adds hash computation and lookup overhead |
+
+### Future Improvements
+
+- **Paste versioning:** Allow editing with version history.
+- **Collaboration:** Real-time collaborative editing (like Google Docs lite).
+- **Paste forking:** Let users fork and modify someone else's paste.
+- **Rich formatting:** Support Markdown rendering alongside raw text.
+- **Burn after reading:** Self-destructing pastes that disappear after first read.
+- **Encryption:** Client-side encryption for private pastes.
+</code></pre>
+<footer>
+<p><strong>System Design Zero to Hero</strong> &copy; 2026 <a href="https://github.com/vinay199129">Vinay Bhadauria</a></p>
+<p><a href="https://vinay199129.github.io/system-design-zth/">Full Course Dashboard</a> &middot; <a href="https://github.com/vinay199129/system-design-zth">GitHub</a></p>
+</footer>
+</body>
+</html>

@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Rate Limiter -- System Design Solution | System Design Zero to Hero</title>
+<meta name="description" content="Rate Limiter system design solution with architecture diagrams, API design, data model, estimation, and trade-off analysis. Part of System Design Zero to Hero course.">
+<meta name="keywords" content="Rate Limiter, system design, architecture, distributed systems, interview prep, Redis, Sliding Window">
+<meta property="og:title" content="Rate Limiter -- System Design Solution">
+<meta property="og:description" content="Complete system design solution with architecture diagrams and trade-off analysis.">
+<meta property="og:type" content="article">
+<meta name="robots" content="index, follow">
+<link rel="canonical" href="https://vinay199129.github.io/system-design-zth/solutions/03-rate-limiter.html">
+<style>
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; background: #0d1117; color: #f0f6fc; line-height: 1.7; }
+h1 { color: #58a6ff; font-size: 24px; }
+h2 { color: #58a6ff; font-size: 18px; margin-top: 24px; }
+a { color: #58a6ff; }
+pre { background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 16px; overflow-x: auto; font-size: 13px; line-height: 1.5; }
+code { font-family: 'Courier New', monospace; }
+.back { display: inline-block; margin-bottom: 16px; padding: 6px 14px; background: #21262d; border: 1px solid #30363d; border-radius: 6px; color: #f0f6fc; text-decoration: none; font-size: 13px; }
+.back:hover { background: #30363d; }
+.badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; margin-left: 8px; }
+footer { margin-top: 40px; padding-top: 16px; border-top: 1px solid #30363d; font-size: 12px; color: #9198a1; text-align: center; }
+</style>
+</head>
+<body>
+<a class="back" href="../index.html">&larr; Back to Dashboard</a>
+<h1>Rate Limiter<span class="badge" style="background:rgba(88,166,255,.15);color:#58a6ff;">Easy-Med</span></h1>
+<p style="color:#9198a1;font-size:13px;">Concepts: Redis, Sliding Window &middot; Companies: Stripe, Cloudflare</p>
+<h2>Solution</h2>
+<pre><code># Solution: Design a Rate Limiter
+
+## 1. Requirements &amp; Estimation
+
+### Functional Requirements
+
+- Throttle requests based on configurable rules (per user, IP, endpoint)
+- Return 429 with `Retry-After` header when limit is exceeded
+- Support multiple rate limiting algorithms
+- Rules are configurable via API or config files
+
+### Non-Functional Requirements
+
+- Sub-5ms overhead per request
+- Distributed — consistent across multiple servers
+- Fail-open — if the rate limiter is unavailable, allow traffic
+- Support 10M+ checks per second
+
+### Estimation
+
+| Metric | Calculation | Result |
+|--------|-------------|--------|
+| Checks / second | 10M (given) | 10M QPS |
+| Counter size | 100 bytes × 100M clients | ~10 GB |
+| Rules storage | 1 KB × 500K rules | ~500 MB |
+| Redis cluster | 10M ops/sec ÷ 100K per node | ~100 shards |
+
+## 2. High-Level Design
+
+```mermaid
+graph LR
+    Client([Client]) --&gt; Gateway[API Gateway]
+    Gateway --&gt; RateLimiter[Rate Limiter\nMiddleware]
+    RateLimiter --&gt;|check/increment| Redis[(Redis Cluster)]
+    RateLimiter --&gt;|load rules| RuleStore[(Rule Config\nStore)]
+    RateLimiter --&gt;|allowed| AppServer[App Server]
+    RateLimiter --&gt;|rejected| Client429([429 Too Many\nRequests])
+```
+
+### Request Flow
+
+1. Client sends a request to the API gateway.
+2. The rate limiter middleware intercepts the request.
+3. It identifies the client (user ID, IP, API key).
+4. Loads applicable rules from the cached rule store.
+5. Checks the counter in Redis against the limit.
+6. If under the limit → increment counter, forward request.
+7. If over the limit → return 429 with `Retry-After`.
+
+## 3. API Design
+
+### Rate Limit Response Headers
+
+Every response includes rate limit headers:
+
+```
+X-RateLimit-Limit: 100         // max requests in window
+X-RateLimit-Remaining: 42      // remaining requests
+X-RateLimit-Reset: 1681500000  // window reset (Unix epoch)
+```
+
+### When Rate Limited
+
+```
+HTTP/1.1 429 Too Many Requests
+Retry-After: 30
+X-RateLimit-Limit: 100
+X-RateLimit-Remaining: 0
+
+{
+  &quot;error&quot;: &quot;Rate limit exceeded&quot;,
+  &quot;retry_after_seconds&quot;: 30
+}
+```
+
+### Rule Configuration API
+
+```
+PUT /api/v1/rate-rules
+{
+  &quot;rules&quot;: [
+    {
+      &quot;client_type&quot;: &quot;user&quot;,
+      &quot;endpoint&quot;: &quot;/api/v1/messages&quot;,
+      &quot;max_requests&quot;: 100,
+      &quot;window_seconds&quot;: 60,
+      &quot;algorithm&quot;: &quot;sliding_window&quot;
+    }
+  ]
+}
+```
+
+## 4. Data Model
+
+### Rule Configuration
+
+| Field | Type | Notes |
+|-------|------|-------|
+| rule_id | UUID | Primary key |
+| client_type | ENUM | user / ip / api_key |
+| endpoint | VARCHAR | URL pattern or wildcard |
+| max_requests | INT | Limit per window |
+| window_seconds | INT | Time window size |
+| algorithm | ENUM | token_bucket / sliding_window / fixed_window |
+| tier | VARCHAR | free / pro / enterprise |
+
+### Redis Counter Keys
+
+```
+rate:{client_id}:{endpoint}:{window_timestamp}
+```
+
+Example: `rate:user_123:/api/messages:1681500000`
+
+TTL is set to `window_seconds + 1` to auto-expire.
+
+## 5. Detailed Design
+
+### Algorithm Comparison
+
+| Algorithm | Burst Tolerance | Memory | Accuracy | Complexity |
+|-----------|----------------|--------|----------|------------|
+| Fixed Window | Allows 2x at boundary | Low | Medium | Simple |
+| Sliding Window Log | None — exact | High | Perfect | Medium |
+| Sliding Window Counter | Minimal | Low | High | Medium |
+| Token Bucket | Configurable | Low | High | Simple |
+| Leaking Bucket | None — smooths | Low | High | Simple |
+
+### Recommended: Token Bucket
+
+Best balance of simplicity, burst tolerance, and memory efficiency.
+
+**How it works:**
+
+1. Each client has a bucket with `max_tokens` capacity.
+2. Tokens are added at a fixed rate (`refill_rate` per second).
+3. Each request consumes one token.
+4. If no tokens are available, the request is rejected.
+
+**Redis implementation (Lua script for atomicity):**
+
+```lua
+local key = KEYS[1]
+local max_tokens = tonumber(ARGV[1])
+local refill_rate = tonumber(ARGV[2])
+local now = tonumber(ARGV[3])
+
+local bucket = redis.call('HMGET', key, 'tokens', 'last_refill')
+local tokens = tonumber(bucket[1]) or max_tokens
+local last_refill = tonumber(bucket[2]) or now
+
+-- Refill tokens
+local elapsed = now - last_refill
+local new_tokens = math.min(max_tokens, tokens + elapsed * refill_rate)
+
+if new_tokens &gt;= 1 then
+    redis.call('HMSET', key, 'tokens', new_tokens - 1, 'last_refill', now)
+    redis.call('EXPIRE', key, max_tokens / refill_rate + 1)
+    return 1  -- allowed
+else
+    return 0  -- rejected
+end
+```
+
+**Why a Lua script?** Redis executes Lua atomically — no race condition between reading and updating the counter, even with concurrent requests.
+
+### Sliding Window Counter (Alternative)
+
+Combines the accuracy of sliding window log with the efficiency of fixed window:
+
+1. Split time into fixed windows (e.g., 1-minute buckets).
+2. For the current request timestamp, calculate a weighted count:
+   - `count = prev_window_count × overlap% + current_window_count`
+3. If `count &lt; limit` → allow; otherwise reject.
+
+### Distributed Rate Limiting
+
+**Challenge:** With multiple rate limiter instances, a client can hit different servers. Each server's local Redis check sees only its slice of traffic.
+
+**Solutions:**
+
+| Approach | How it works | Trade-off |
+|----------|-------------|-----------|
+| Centralized Redis | All servers share one Redis cluster | Single point of failure |
+| Redis Cluster | Shard counters across nodes | Minor inconsistency during splits |
+| Local + sync | Each node does local counting, syncs periodically | Allows slight over-limit |
+
+**Recommended:** Redis Cluster with consistent hashing. Client keys are deterministically routed to the same shard, ensuring atomic operations.
+
+### Rule Evaluation Pipeline
+
+1. Extract client identity (user ID, IP, API key).
+2. Match against rule store (most specific rule wins).
+3. Apply the algorithm for each matching rule.
+4. If ANY rule rejects, block the request.
+
+Rules are cached locally with a 30-second TTL to avoid fetching from the config store on every request.
+
+## 6. Scaling &amp; Trade-offs
+
+### Bottlenecks
+
+| Bottleneck | Mitigation |
+|------------|------------|
+| Redis throughput | Cluster with sharding; pipeline operations |
+| Network latency to Redis | Co-locate Redis with app servers; use local caching |
+| Hot partitions (single user) | Deterministic sharding ensures one shard per key |
+| Rule config updates | Local cache with periodic refresh (30s) |
+
+### Trade-offs
+
+| Decision | Trade-off |
+|----------|-----------|
+| Fail-open vs fail-closed | Fail-open risks abuse during outages; fail-closed risks blocking legitimate users |
+| Centralized vs distributed | Centralized is more accurate but creates a dependency |
+| Lua scripts vs pipeline | Lua is atomic but harder to debug |
+| Token Bucket vs Sliding Window | Token Bucket allows bursts; Sliding Window is smoother |
+
+### Future Improvements
+
+- **Adaptive rate limiting:** Adjust limits based on system load in real-time.
+- **Quota management:** Monthly/daily usage quotas in addition to per-second limits.
+- **Client-specific headers:** Let clients pre-check their remaining quota before making requests.
+- **Analytics dashboard:** Show rate limit hit metrics per client, endpoint, and rule.
+- **Webhook alerts:** Notify when a client is consistently hitting rate limits.
+- **IP reputation scoring:** Dynamically adjust limits based on client behavior patterns.
+</code></pre>
+<footer>
+<p><strong>System Design Zero to Hero</strong> &copy; 2026 <a href="https://github.com/vinay199129">Vinay Bhadauria</a></p>
+<p><a href="https://vinay199129.github.io/system-design-zth/">Full Course Dashboard</a> &middot; <a href="https://github.com/vinay199129/system-design-zth">GitHub</a></p>
+</footer>
+</body>
+</html>

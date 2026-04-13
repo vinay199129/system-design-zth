@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>https://vinay199129.github.io/system-design-zth/</loc></url>
+  <url><loc>https://vinay199129.github.io/system-design-zth/solutions/01-url-shortener.html</loc></url>
+  <url><loc>https://vinay199129.github.io/system-design-zth/solutions/02-pastebin.html</loc></url>
+  <url><loc>https://vinay199129.github.io/system-design-zth/solutions/03-rate-limiter.html</loc></url>
+  <url><loc>https://vinay199129.github.io/system-design-zth/solutions/04-key-value-store.html</loc></url>
+  <url><loc>https://vinay199129.github.io/system-design-zth/solutions/05-unique-id-generator.html</loc></url>
+  <url><loc>https://vinay199129.github.io/system-design-zth/solutions/06-web-crawler.html</loc></url>
+  <url><loc>https://vinay199129.github.io/system-design-zth/solutions/07-notification-system.html</loc></url>
+  <url><loc>https://vinay199129.github.io/system-design-zth/solutions/08-chat-system.html</loc></url>
+  <url><loc>https://vinay199129.github.io/system-design-zth/solutions/09-news-feed.html</loc></url>
+  <url><loc>https://vinay199129.github.io/system-design-zth/solutions/10-typeahead.html</loc></url>
+  <url><loc>https://vinay199129.github.io/system-design-zth/solutions/01-instagram.html</loc></url>
+  <url><loc>https://vinay199129.github.io/system-design-zth/solutions/02-youtube.html</loc></url>
+  <url><loc>https://vinay199129.github.io/system-design-zth/solutions/03-twitter.html</loc></url>
+  <url><loc>https://vinay199129.github.io/system-design-zth/solutions/04-uber.html</loc></url>
+  <url><loc>https://vinay199129.github.io/system-design-zth/solutions/05-dropbox.html</loc></url>
+  <url><loc>https://vinay199129.github.io/system-design-zth/solutions/06-google-search.html</loc></url>
+  <url><loc>https://vinay199129.github.io/system-design-zth/solutions/07-distributed-cache.html</loc></url>
+  <url><loc>https://vinay199129.github.io/system-design-zth/solutions/08-payment-system.html</loc></url>
+  <url><loc>https://vinay199129.github.io/system-design-zth/solutions/09-ticket-booking.html</loc></url>
+  <url><loc>https://vinay199129.github.io/system-design-zth/solutions/10-google-maps.html</loc></url>
+</urlset>
