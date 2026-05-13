@@ -7,6 +7,7 @@ import { ThemeBootstrap } from '@/components/ThemeBootstrap';
 import './globals.css';
 
 export const metadata: Metadata = {
+  metadataBase: new URL('https://vinay199129.github.io/system-design-zth'),
   title: {
     default: 'System Design Zero to Hero — 60-day Interview Prep',
     template: '%s — System Design Zero to Hero',

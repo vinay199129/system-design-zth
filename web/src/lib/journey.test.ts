@@ -10,7 +10,7 @@ import {
   TOTAL_SCHEDULE_DAYS,
   TOTAL_TRACK_DAYS,
 } from './journey';
-import type { UserProfile } from './profile';
+import { normaliseProfile, type UserProfile } from './profile';
 import type { ProgressState } from './progress';
 import type { ScheduleDay } from '@/generated/types';
 
@@ -285,5 +285,47 @@ describe('module constants', () => {
 
   it('parses 60 schedule days from daily-schedule.md', () => {
     expect(TOTAL_SCHEDULE_DAYS).toBe(60);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// normaliseProfile (legacy UTC-date fix)
+// ---------------------------------------------------------------------------
+
+describe('normaliseProfile', () => {
+  it('returns null unchanged', () => {
+    expect(normaliseProfile(null)).toBeNull();
+  });
+
+  it('returns a profile without startDate unchanged', () => {
+    const p = { ...fakeProfile(), startDate: '' };
+    expect(normaliseProfile(p)).toBe(p);
+  });
+
+  it('leaves a healthy local-date startDate alone', () => {
+    const local = (() => {
+      const d = new Date();
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    })();
+    const p = fakeProfile({ startDate: local });
+    expect(normaliseProfile(p)).toBe(p);
+  });
+
+  it('rewrites startDate when it equals UTC today but not local today', () => {
+    // Only meaningful when running in a timezone where today's UTC and local
+    // dates differ. We simulate that by checking the actual conditional.
+    const utcToday = new Date().toISOString().slice(0, 10);
+    const d = new Date();
+    const localToday = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    if (utcToday === localToday) {
+      // Same date in both — the normaliser's guard correctly no-ops.
+      const p = fakeProfile({ startDate: utcToday });
+      expect(normaliseProfile(p)).toBe(p);
+    } else {
+      const p = fakeProfile({ startDate: utcToday });
+      const fixed = normaliseProfile(p);
+      expect(fixed).not.toBe(p);
+      expect(fixed?.startDate).toBe(localToday);
+    }
   });
 });

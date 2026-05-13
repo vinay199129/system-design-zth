@@ -22,13 +22,11 @@ interface ProfileFormProps {
 }
 
 function todayISO() {
-  return new Date().toISOString().slice(0, 10);
+  // Local-date ISO yyyy-mm-dd (NOT UTC; toISOString would roll back a day
+  // for users in eastern timezones late at night).
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
-
-/**
- * One-shot settings form (used by /profile). Shows every field in a single
- * column. ProfileOnboarding renders the same fields split across 2 steps.
- */
 export function ProfileForm({
   initial,
   onSave,

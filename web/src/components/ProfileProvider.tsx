@@ -4,11 +4,14 @@ import {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
+  useRef,
   type ReactNode,
 } from 'react';
 import {
   DEFAULT_PROFILE,
+  normaliseProfile,
   PROFILE_STORAGE_KEY,
   type UserProfile,
 } from '@/lib/profile';
@@ -33,6 +36,20 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
     (next: UserProfile | null) => setProfileValue(next),
     [setProfileValue],
   );
+
+  // One-shot fix for profiles saved by a pre-fix client where `startDate` was
+  // stamped using UTC date instead of local date — see normaliseProfile().
+  const normalisedRef = useRef(false);
+  useEffect(() => {
+    if (!hydrated || normalisedRef.current || !profile) return;
+    const fixed = normaliseProfile(profile);
+    if (fixed !== profile) {
+      normalisedRef.current = true;
+      setProfileValue(fixed);
+    } else {
+      normalisedRef.current = true;
+    }
+  }, [hydrated, profile, setProfileValue]);
 
   const clear = useCallback(() => setProfileValue(null), [setProfileValue]);
 

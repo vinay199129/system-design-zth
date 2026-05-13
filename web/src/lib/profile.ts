@@ -48,6 +48,31 @@ export const PROFILE_STORAGE_KEY = 'sd-zth:profile';
 
 export const DEFAULT_PROFILE: UserProfile | null = null;
 
+/** Local-date ISO yyyy-mm-dd (e.g. "2026-05-14"). */
+function localIsoToday(d: Date = new Date()): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+/**
+ * Fixes a profile saved by an older client that used `toISOString().slice(0,10)`
+ * for `startDate` — that returned the UTC date, which rolls back to "yesterday"
+ * for users east of UTC who set up after their local midnight.
+ *
+ * If `startDate` exactly matches today's UTC date, but that date is NOT today's
+ * local date, we silently shift it forward to today's local date. This is a
+ * one-shot heuristic: future saves use the timezone-aware `todayISO()` so the
+ * condition won't trigger again.
+ */
+export function normaliseProfile(p: UserProfile | null): UserProfile | null {
+  if (!p?.startDate) return p;
+  const utcToday = new Date().toISOString().slice(0, 10);
+  const localToday = localIsoToday();
+  if (p.startDate === utcToday && utcToday !== localToday) {
+    return { ...p, startDate: localToday };
+  }
+  return p;
+}
+
 export function profileInitials(profile: UserProfile | null): string {
   if (!profile?.name) return '';
   const parts = profile.name.trim().split(/\s+/).slice(0, 2);

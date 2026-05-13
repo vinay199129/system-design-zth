@@ -62,7 +62,10 @@ export function ProfileOnboarding() {
 }
 
 function todayISO() {
-  return new Date().toISOString().slice(0, 10);
+  // Local-date ISO yyyy-mm-dd (NOT UTC; toISOString would roll back a day
+  // for users in eastern timezones late at night).
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
 interface DraftProfile {
@@ -126,7 +129,7 @@ function OnboardingWizard({
       draft.hours === '4' ? 45 : draft.hours === '1' ? 90 : 60;
     const finish = new Date(start);
     finish.setDate(finish.getDate() + trackDays - 1);
-    return { trackDays, finishISO: finish.toISOString().slice(0, 10) };
+    return { trackDays, finishISO: `${finish.getFullYear()}-${String(finish.getMonth() + 1).padStart(2, '0')}-${String(finish.getDate()).padStart(2, '0')}` };
   })();
 
   if (step === 1) {

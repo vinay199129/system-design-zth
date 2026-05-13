@@ -120,7 +120,9 @@ export function countByStatus(
 }
 
 export function markActivity(state: ProgressState): ProgressState {
-  const today = new Date().toISOString().slice(0, 10);
+  // Local-date key (matches heatmap rendering, avoids UTC rollover bug).
+  const d = new Date();
+  const today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   return {
     ...state,
     heatmap: { ...state.heatmap, [today]: (state.heatmap[today] ?? 0) + 1 },
