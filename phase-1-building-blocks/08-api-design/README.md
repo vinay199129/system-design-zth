@@ -170,3 +170,61 @@ Idempotency is the **most important API design concept for financial and e-comme
 **What Stripe does:** Every POST request to Stripe's API accepts an `Idempotency-Key` header. Stripe stores the key for 24 hours. Retries within that window return the original response. This is why Stripe's API is considered the gold standard for financial APIs.
 
 **What to say in an interview:** "For any write operation that has side effects — especially financial transactions — I would implement idempotency keys. The client sends a UUID with each request, and the server checks against a Redis-backed idempotency store. This guarantees safe retries across network failures without double-processing."
+
+---
+
+## First-time Recognition Signals
+
+When you read a brand-new system design prompt, this building block is the right tool if you see:
+
+- **"Design the API / sketch the endpoints for X"** — the interviewer is explicitly asking for the contract.
+- **"Public-facing API with third-party integrations / SDKs"** — versioning, deprecation, and idempotency keys become first-class concerns.
+- **"Mobile and web clients talking to the same backend"** — REST/GraphQL design choices (over-fetching, batching, pagination) directly affect mobile bandwidth.
+- **"Strict typing / generated clients across multiple services"** — gRPC + protobuf or OpenAPI-generated SDKs.
+- **"Real-time bidirectional updates / chat / live cursor"** — WebSocket / Server-Sent Events, not REST.
+
+### Anti-signals (looks like this building block, isn't)
+
+- **"Internal service-to-service RPC behind a service mesh"** — REST is fine but gRPC is usually faster and more typed; pick consciously.
+- **"Fire-and-forget commands with no synchronous response"** — a message queue is the API surface, not REST.
+- **"Streaming large file uploads / downloads"** — direct-to-blob (presigned URL) is better than streaming through your API.
+
+---
+
+### Intuition
+
+An API contract is the part of your system that's hardest to change once shipped — every caller hard-codes against it. Good API design front-loads decisions that are expensive to reverse: pagination shape, error model, versioning. The classic trap is offset pagination — it works great on page 2 of 50 and *fatally* breaks on page 50,000 because the database has to skip rows it then throws away. Cursor pagination trades the ability to "jump to page N" for predictable performance at any depth.
+
+### Worked Example: Cursor vs offset pagination over 10M rows
+
+`SELECT id, body FROM events ORDER BY created_at DESC, id DESC LIMIT 20 OFFSET ?` against a 10 M-row table with an index on `(created_at, id)`.
+
+| Offset | Query plan | Avg latency | p99 |
+|---|---|---|---|
+| 0 | Index scan, fetch 20 | 2 ms | 5 ms |
+| 1,000 | Index scan, skip 1k, fetch 20 | 5 ms | 12 ms |
+| 100,000 | Index scan, skip 100k, fetch 20 | 90 ms | 250 ms |
+| **1,000,000** | Index scan, skip 1M, fetch 20 | **900 ms** | **2,500 ms** |
+
+The DB literally walks 1,000,020 index entries to return 20. Worse: any insert between page fetches shifts every offset → users see duplicates or skips.
+
+**Cursor pagination:** `WHERE (created_at, id) < (last_created_at, last_id) ORDER BY created_at DESC, id DESC LIMIT 20`.
+
+| Offset (depth) | Query plan | Latency | Stability under inserts |
+|---|---|---|---|
+| Any | Index seek to cursor + fetch 20 | 2–5 ms (constant) | **Stable** — cursor anchored to a real row |
+
+**Surprise:** cursor pagination is *not* harder than offset for the typical "next page" UX — just round-trip the last row's `(created_at, id)` to the client as an opaque token. The only thing you lose is "jump to page 47", which most products don't actually need. **Lesson:** if your dataset will ever exceed ~10k rows, default to cursor; reserve offset for admin tools.
+
+For public APIs, also bake in:
+- **Idempotency keys** on POST (Stripe pattern) so retries don't double-charge.
+- **Versioning via header** (`Stripe-Version: 2024-01-15`) — URL never changes.
+- **Standardized error envelope** — `{ code, message, request_id, retryable }`.
+
+### Further Reading
+
+- [Google AIP (API Improvement Proposals)](https://google.aip.dev/) — canonical resource for naming, pagination, error model.
+- [Stripe API Blog — Designing robust and predictable APIs with idempotency](https://stripe.com/blog/idempotency)
+- Fielding, *Architectural Styles and the Design of Network-based Software Architectures*, ch. 5 — the REST dissertation; statelessness, uniform interface.
+- [gRPC documentation](https://grpc.io/docs/) — Protobuf schema evolution rules and internal-RPC patterns.
+

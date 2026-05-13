@@ -164,3 +164,55 @@ The **circuit breaker** is the most interview-relevant resilience pattern and na
 - Return an error with a clear retry-after header.
 
 **What to say in an interview:** "Between services, I would implement circuit breakers — either via Envoy sidecar if we are using a service mesh, or via a library like resilience4j. The circuit opens when the failure rate exceeds 50% over a sliding window of 100 requests. While open, requests fail fast with a cached fallback response. After 30 seconds, the circuit enters half-open state to test recovery. This prevents one slow service from cascading failures across the entire system."
+
+---
+
+## First-time Recognition Signals
+
+When you read a brand-new system design prompt, this building block is the right tool if you see:
+
+- **"Single entry point in front of many backend services / microservices"** — the classic API gateway pattern (Kong, Apigee, AWS API Gateway).
+- **"Authenticate and authorize every request at the edge"** — JWT / OAuth validation centralized at the gateway, not duplicated per service.
+- **"Per-client rate limiting / quotas / API keys"** — gateways are the natural enforcement point.
+- **"Request / response transformation, header injection, CORS"** — gateway responsibility, not service code.
+- **"Centralized observability: logging, tracing, metrics for every call"** — sidecar / gateway pattern shines.
+
+### Anti-signals (looks like this building block, isn't)
+
+- **"Distribute traffic across N replicas of a single service"** — that is a load balancer; gateways are overkill and add a hop.
+- **"Service-to-service east-west traffic with mTLS and retries"** — that is a service mesh (Istio, Linkerd), which is sibling-of, not same-as, an API gateway.
+- **"Serve static images / videos / JS at the edge"** — CDN, not API gateway.
+
+---
+
+### Intuition
+
+A proxy is an extra hop between client and server, and an API gateway is a proxy with opinions: it authenticates, rate-limits, transforms, fans out, and observes. Everything a gateway does *could* live in the service itself — but then every team reinvents auth, every service has its own retry config, and the "platform" is just folklore. The gateway is where you push cross-cutting concerns that don't belong to one service. The trap: keep pushing, and the gateway becomes a monolith bottleneck.
+
+### Worked Example: Gateway responsibility matrix
+
+For each cross-cutting concern, decide: **keep at gateway**, **push to service**, or **split**.
+
+| Concern | Gateway | Service | Rationale |
+|---|---|---|---|
+| TLS termination | ✅ | ❌ | One certificate to rotate; CPU offload. |
+| AuthN (verify JWT signature) | ✅ | ❌ | All services trust the validated claims downstream. |
+| AuthZ (RBAC, coarse) | ✅ | ⚠️ | Gateway can enforce "user has scope `read:orders`". |
+| AuthZ (row-level / ABAC) | ❌ | ✅ | Gateway can't know per-record permissions. |
+| Rate limiting (per-user, generic) | ✅ | ❌ | Centralized counter; consistent quota. |
+| Rate limiting (per-endpoint business rule) | ❌ | ✅ | Tied to domain logic (e.g., 1 password reset/day). |
+| Logging & trace-ID injection | ✅ | ✅ | Gateway stamps `x-request-id`; service adds spans. |
+| Request transformation (schema change) | ❌ | ✅ | Gateway should not know request semantics. |
+| Fan-out / scatter-gather (BFF) | ✅ for mobile BFF | ⚠️ | OK in a dedicated BFF; not in a generic edge gateway. |
+| Circuit breaker | ⚠️ coarse | ✅ | Service-mesh sidecar > gateway for east-west calls. |
+| HTTP cache (by URL) | ✅ | ❌ | CDN-style edge cache naturally lives at the gateway. |
+
+**Surprise:** "AuthN at the gateway, AuthZ at the service" is the single most useful split — the gateway proves *who* you are; the service decides *what* you can do. A naive design that pushes row-level authz to the gateway forces it to know every service's data model and becomes unmaintainable. **Lesson:** keep the gateway *generic*; let services own business semantics. The interview line: "I let the gateway do everything that doesn't require knowing the service's data."
+
+### Further Reading
+
+- [Envoy — Architecture overview](https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/intro/arch_overview) — listeners, filters, clusters; modern L7 proxy design.
+- [Netflix Tech Blog — Zuul 2: The Netflix Journey to Async, Non-Blocking Systems](https://netflixtechblog.com/zuul-2-the-netflix-journey-to-asynchronous-non-blocking-systems-45947377fb5c)
+- [Kong — Deployment topologies & plugin model](https://docs.konghq.com/gateway/latest/production/deployment-topologies/)
+- Bilgin Ibryam — *API Gateway vs Service Mesh* (InfoQ) — when each is the right tool and how they overlap.
+

@@ -151,3 +151,80 @@ Snowflake and any timestamp-based ID scheme depend on synchronized clocks. If a 
 5. **Deployment:** Run as a lightweight library within each service (not a separate service). This avoids network hops and eliminates a single point of failure.
 
 **Real-world adoption:** Twitter Snowflake, Discord Snowflake (extended to 64-bit with worker/process IDs), Instagram (modified Snowflake using PostgreSQL stored procedure with shard ID embedded), Sony's Sonyflake (optimized for fewer machines, longer sequence).
+
+---
+
+## First-time Recognition Signals
+
+When you read a brand-new system design prompt, this topic deserves explicit design if you see:
+
+- **"Globally unique IDs across many shards / regions / services"** — UUIDv4, Snowflake, or KGS depending on shape.
+- **"Short, URL-safe ID"** (URL shortener, paste ID, invite code) — base62-encoded counter or hash-based scheme.
+- **"Roughly time-ordered IDs so we can paginate by ID"** — Snowflake-style (timestamp + machine + sequence) gives k-sorted order.
+- **"Distributed system with no central ID coordinator"** — Snowflake or UUIDv7 per node.
+- **"IDs are also the shard key, so they must distribute uniformly"** — hash-based IDs or random suffixes.
+
+### Anti-signals (looks like this topic, isn't)
+
+- **"Single SQL database"** — `BIGINT AUTO_INCREMENT` / `SERIAL` is fine; don't reach for Snowflake to look fancy.
+- **"Need an unguessable security token / share link"** — `crypto.randomBytes` UUIDv4 is correct; Snowflake leaks creation time and machine ID.
+- **"Need strict total ordering across the whole system"** — Snowflake gives only k-sorted-by-second; strict total order requires a coordinator or a single sequence service.
+
+---
+
+### Intuition
+
+Once you scale beyond a single SQL primary, `AUTO_INCREMENT` stops working — multiple writers can't share a counter without coordination. You need IDs that are unique without talking to anyone *and* roughly sortable by time (so they cluster nicely on disk and are easy to debug). Snowflake-style IDs achieve both by packing a timestamp + worker ID + sequence into a 64-bit integer. The whole scheme rests on one assumption: clocks are monotonic — and in practice, they aren't.
+
+### Worked Example: Snowflake bit-layout walkthrough
+
+Twitter's original Snowflake: 64-bit integer.
+
+```
+| 1 bit | 41 bits          | 10 bits     | 12 bits    |
+| sign  | ms since epoch   | worker_id   | sequence   |
+| = 0   |                  | 0..1023     | 0..4095    |
+```
+
+**Capacity:**
+
+- 41-bit ms → `2^41 / (1000 × 60 × 60 × 24 × 365) ≈ 69.7 years` of unique timestamps from epoch.
+- 10-bit worker → **1024 workers** mint IDs in parallel.
+- 12-bit sequence → **4,096 IDs per ms per worker** = `4,096 × 1,000 = 4.096 M IDs/sec per worker`.
+- Cluster total: `1024 × 4.096 M ≈ 4.19 billion IDs/sec`. Far more than any single service needs.
+
+**The clock-skew failure mode:**
+
+Worker A's clock jumps backward 500 ms (NTP correction, VM live-migration, leap second).
+
+```
+T0   = 1700000000123 ms → mints IDs   ...123-A-0001 .. -0042
+NTP rewind → clock = 1700000000023
+T0-100 = 1700000000023 ms → would mint ...023-A-0001 again
+```
+
+The new IDs collide with already-issued ones from this same worker → duplicate primary keys, silent overwrites, or constraint violations.
+
+**Mitigations:**
+
+- **Refuse to mint while `wall_clock < last_issued_ms`.** Twitter's original Snowflake does this; the worker errors out for the duration of the skew (usually ms). Drops throughput briefly, preserves uniqueness.
+- **Borrow from sequence:** continue minting at `last_issued_ms` and increment the sequence; safe as long as the drift is less than the sequence headroom (12 bits = 4,096 IDs cushion per ms).
+- **Disable NTP step adjustments** in production (slew only). Standard SRE practice.
+
+| Variant | Time bits | Worker bits | Seq bits | Throughput |
+|---|---|---|---|---|
+| Snowflake (Twitter) | 41 ms | 10 | 12 | 4 M/s/worker |
+| Sonyflake | 39 (10 ms units) | 16 | 8 | 25 k/s/worker (more workers) |
+| Instagram | 41 ms | 13 (shard) | 10 | 1 M/s/shard |
+| ULID | 48 ms | — | 80-bit random | unique, sortable, no coordination |
+| UUIDv7 (RFC 9562) | 48 ms | — | 74-bit random | modern standard |
+
+**Surprise:** Snowflake is only "k-sorted by second" — two IDs ms apart from different workers can interleave. **Lesson:** don't rely on Snowflake order for strict happens-before — use a Lamport clock or version vector if you need it.
+
+### Further Reading
+
+- [Twitter — Announcing Snowflake (2010)](https://blog.twitter.com/engineering/en_us/a/2010/announcing-snowflake) — original blog post.
+- [Instagram Engineering — Sharding & IDs at Instagram](https://instagram-engineering.com/sharding-ids-at-instagram-1cf5a71e5a5c)
+- [Sonyflake](https://github.com/sony/sonyflake), [ULID spec](https://github.com/ulid/spec), [KSUID](https://github.com/segmentio/ksuid) — alternative encodings with different trade-offs.
+- [UUIDv7 — RFC 9562](https://datatracker.ietf.org/doc/rfc9562/) — modern time-ordered UUID standard.
+

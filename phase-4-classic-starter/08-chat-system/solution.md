@@ -244,3 +244,35 @@ session:{user_id} → {
 - **Voice/video calls:** Extend WebSocket signaling with WebRTC.
 - **Message search:** Elasticsearch index populated asynchronously.
 - **Disappearing messages:** TTL-based auto-deletion with client-side enforcement.
+
+---
+
+## First-time Recognition Signals
+
+When the interviewer's prompt sounds like this, the chat-system playbook (WebSocket gateway + Redis pub/sub fan-out + Cassandra wide rows + presence service) is the right answer:
+
+- **"Real-time 1:1 messaging with delivery and read receipts"** — direct match for persistent WS connections and per-message ack.
+- **"Group chats with hundreds (or thousands) of participants"** — fan-out strategy decision (push for small groups, pull for large).
+- **"Online/offline presence indicator updated in seconds"** — Redis presence keys with TTL.
+- **"Messages sync across phone, web, and desktop"** — per-device cursor / sync log.
+- **"Push notification when the recipient is offline"** — handoff to the notification system.
+
+### Anti-signals (looks like this design, isn't)
+
+- **"Email-style threaded conversations with subject lines"** — that's an inbox / mail-server design; not real-time WS.
+- **"Voice or video calls between users"** — WebRTC + SFU/MCU (Zoom design); chat WS handles signaling at most.
+- **"Live comments scrolling under a video"** — that's a pub/sub fan-out at YouTube/Twitch scale; the semantics are broadcast, not 1:1.
+
+## Further Reading
+
+- WhatsApp blog — "1 Million is so 2011" (Erlang and connection-density classic).
+- Slack Engineering — the "Scaling Slack" series and Flannel cache.
+- Discord blog — "How Discord stores billions of messages" (Cassandra → ScyllaDB migration).
+- *System Design Interview Vol. 1* (Alex Xu), Chapter 12 — Design a Chat System.
+
+## Variant Prompts
+
+- **"What if there are 100× more messages?"** — shard Cassandra by `conversation_id`, add WS gateways behind consistent-hash LB, partition the pub/sub bus by region.
+- **"What if global p99 send→deliver must be < 50 ms?"** — regional WS gateways with cross-region pub/sub; place message store replicas in each region.
+- **"What if no message can ever be lost?"** — sync write to two Cassandra replicas before ack; client-side store-and-forward for offline writes.
+- **"What if the team only has 2 engineers?"** — Pusher / PubNub / Ably for the WS layer + Firebase Firestore for storage; no custom infra.

@@ -180,3 +180,21 @@ Edge cases:
 | Ignore failure cases | Discuss what happens when things break |
 | Give one option | Present 2-3 options with trade-offs, then choose |
 | Stay silent while thinking | Think out loud -- the interviewer evaluates your process |
+
+---
+
+## Self-Scoring Rubric (reference from Phase 6)
+
+After every mock or drill, score yourself out of 25:
+
+| Criterion | 0-2 | 3 | 4-5 |
+|---|---|---|---|
+| Requirements gathered | Skipped FRs/NFRs | Got both, no numbers | FRs + 3 NFRs with numbers |
+| High-level design | 1-3 boxes | 4-5 generic boxes | 5-7 boxes with arrows + API contracts |
+| Deep dive | Hand-waved | 1 deep area | 1-2 deep areas with concrete math |
+| Trade-offs | None | 1 weak trade-off | 3 concrete, alternatives named |
+| Time management | Off by ≥ 10 min | Off by ≤ 5 min | Hit each milestone within 1 min |
+
+- **≥ 20** → ready for interview.
+- **15-19** → drill weakest criterion; redo the same prompt in 48 hours.
+- **< 15** → redo the design cold tomorrow with the answer-template open.

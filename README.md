@@ -4,25 +4,47 @@
 
 ## Quick Start
 
-1. Open [dashboard.html](dashboard.html) -- your interactive progress tracker, timer, and navigation hub
-2. Read [how-to-think.md](how-to-think.md) first -- the RESHADED system design framework
-3. Follow [daily-schedule.md](daily-schedule.md) -- exactly what to do each day
-4. Reference [plan.md](plan.md) -- the full course blueprint with theory and explanations
-5. Use [templates/answer-template.md](templates/answer-template.md) -- the structured 45-minute answer framework
-6. Track [progress.md](progress.md) -- markdown checklist (alternative to dashboard)
+The course ships as a Next.js app under [`web/`](web/) (live at https://vinay199129.github.io/system-design-zth/) and a parallel set of source markdown files at the repo root.
+
+**To use the live site**: go to https://vinay199129.github.io/system-design-zth/ and follow the day-by-day plan it surfaces.
+
+**To run locally**:
+
+```bash
+cd web
+npm install
+npm run dev      # http://localhost:3000
+```
+
+**To read the source content directly** (no web UI):
+
+1. Start with [system-design-primer.md](system-design-primer.md) — the 4-question framework, latency numbers, 6 building blocks, 8 canonical question templates.
+2. Read [how-to-think.md](how-to-think.md) — RESHADED framework + Pattern Identification Workout (10 prompts with hidden answers).
+3. Follow [daily-schedule.md](daily-schedule.md) — day-by-day plan with time estimates.
+4. Reference [plan.md](plan.md) — full course blueprint.
+5. Use [templates/answer-template.md](templates/answer-template.md) — 45-minute structured answer framework + self-scoring rubric.
 
 ## Project Map
 
 ```
 system-design-zth/
 |-- README.md                  <- YOU ARE HERE (start point)
-|-- how-to-think.md            <- RESHADED framework (read first)
+|-- system-design-primer.md    <- 4-question framework + latency numbers + 8 templates
+|-- how-to-think.md            <- RESHADED framework + Pattern Identification Workout
 |-- plan.md                    <- Full course blueprint with theory
 |-- progress.md                <- Master checklist tracker
 |-- daily-schedule.md          <- Day-by-day plan with time estimates
-|-- estimation-reference.md    <- Back-of-envelope numbers cheat sheet
+|-- estimation-reference.md    <- Back-of-envelope numbers + Jeff Dean latency table
 |-- redo-queue.md              <- Designs to revisit (weakness tracker)
 |-- setup.md                   <- Environment setup guide
+|
+|-- web/                       <- Next.js 15 app (the live site)
+|   |-- src/                   <- React + Tailwind, App Router, static export
+|   |-- scripts/               <- extract-content.mjs (parses all source .md)
+|   '-- public/                <- favicon, static assets
+|
+|-- .audit/                    <- 5 audit reports + signals append script
+|-- .github/workflows/         <- deploy.yml (Pages deploy on push to main)
 |
 |-- templates/
 |   '-- answer-template.md     <- 45-minute structured answer framework
@@ -93,20 +115,20 @@ system-design-zth/
 
 ## How Each Module Works
 
-Every building block / concept module contains:
+Every building block / concept module (Phase 1-3) contains:
 
 | File | Purpose |
 |------|---------|
-| README.md | Deep dive: why it matters, how it works, trade-offs, Mermaid diagrams |
-| case-studies/ | Mini case studies applying the concept to real systems |
+| README.md | Why this matters · How it works · Trade-offs · Mermaid diagrams · First-time Recognition Signals · Anti-signals · Intuition · Worked Example · Further Reading |
+| case-studies/ | Real production systems applying this concept (Memcached @ Facebook, Twitter fan-out, etc.) |
 
 Every design problem module (Phase 4-5) contains:
 
 | File | Purpose |
 |------|---------|
-| README.md | Overview, constraints, scale requirements |
+| README.md | Overview, learning objectives, common pitfalls, time budget, related designs |
 | problem.md | Problem statement, hints, structured thinking prompts |
-| solution.md | Full design: API, DB schema, architecture diagrams, trade-offs |
+| solution.md | Full design: API, DB schema, architecture diagrams, trade-offs, Recognition Signals, Anti-signals, Further Reading, Variant Prompts |
 
 ### Workflow for Each Design
 
@@ -117,8 +139,8 @@ Every design problem module (Phase 4-5) contains:
 4. If still stuck -> read Hint 2, try again 10 min
 5. If still stuck -> read solution.md, study the architecture
 6. After designing: write your own notes on trade-offs and alternatives
-7. Mark status in the dashboard
-8. Next day: re-design without looking (spaced repetition)
+7. Mark status on the site or in progress.md
+8. Next day: re-design without looking (spaced repetition via /redo)
 ```
 
 ## Prerequisites
@@ -166,10 +188,13 @@ This course draws on ideas and approaches from the broader system design educati
 
 ### Built With
 
-- Vanilla HTML/CSS/JS -- Self-contained dashboard (no frameworks, no dependencies)
-- Mermaid.js -- Architecture diagrams rendered in-browser
-- Python 3 -- Build tooling
-- GitHub Copilot -- AI-assisted content generation and review
+- Next.js 15 + React 19 + TypeScript + Tailwind CSS — the live site at [`web/`](web/), statically exported
+- `@tailwindcss/typography` — long-form markdown styling
+- Mermaid 11 — architecture diagrams rendered in-browser
+- Shiki — build-time syntax highlighting
+- `unified` + `remark-gfm` + `rehype-slug` — markdown → HTML pipeline
+- GitHub Actions + GitHub Pages — CI + hosting
+- GitHub Copilot — AI-assisted content generation and review
 
 ## Also See
 

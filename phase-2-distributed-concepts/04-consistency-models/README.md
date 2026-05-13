@@ -135,3 +135,71 @@ TrueTime is a clock API that returns a time interval `[earliest, latest]` rather
 - Readers at any replica can serve a consistent snapshot by reading at a chosen timestamp.
 
 **Why this matters in interviews:** Spanner shows that the CAP trade-off isn't absolute — with enough engineering (atomic clocks!), you can push the boundary. But for most systems, you don't have TrueTime, so you're choosing between consistency and latency. Mentioning Spanner as a reference point shows you understand both theory and practice.
+
+---
+
+## First-time Recognition Signals
+
+When you read a brand-new system design prompt, this topic deserves explicit discussion if you see:
+
+- **The interviewer literally asks "strong or eventual consistency here?"** — you must name a model (linearizable, sequential, causal, eventual) and justify.
+- **"Financial / inventory / counter must never be negative or double-counted"** — strong / linearizable on that path.
+- **"User must see their own post immediately after creating it"** — read-your-writes consistency (often via session pinning to the leader).
+- **"Multi-region active-active writes"** — CAP forces a choice; explain conflict resolution (LWW, CRDTs, vector clocks).
+- **"Two users editing the same document concurrently"** — operational transform / CRDT, not a single consistency keyword.
+
+### Anti-signals (looks like this topic, isn't)
+
+- **"Stateless service, no persistence on this node"** — consistency model applies to the data store it talks to, not the service itself.
+- **"Single-leader DB with no replication"** — strongly consistent by default; don't belabor consistency unless replication is introduced.
+- **"User-perceived freshness within seconds is fine, and the data is read by one user at a time"** — eventual consistency is fine; stop at "we accept N-second staleness".
+
+---
+
+### Intuition
+
+Consistency is the contract about what a reader sees after a writer writes. "Strong" means a read after a write always sees the write — easy on one machine, expensive across many. "Eventual" means readers *eventually* see writes — cheap, but the user may see their own profile update vanish on refresh. The art is matching the model to the user expectation: bank balance = strong; YouTube like count = eventual; user's own profile edit = **read-your-writes** (a hybrid most candidates miss).
+
+### Worked Example: Read-your-writes in multi-AZ
+
+A user updates their profile bio at T = 0 against the primary in `us-east-1a`. They refresh the page at T = 50 ms; the read lands on a read-replica in `us-east-1b`. Async replication lag = 200 ms.
+
+**Naive read-after-write:**
+
+```
+T = 0:    write to primary, ack returned.
+T = 50ms: read hits replica, lag = 200 ms → sees OLD bio.
+User: "Where did my edit go?!" → re-submits → support ticket.
+```
+
+**Fix 1 — Primary-pin for N seconds after write.** Cookie set on write: `last_write_ts = T0`. Read router rule: if `now() - last_write_ts < replication_lag_max` (say 3 s), route to primary.
+
+```
+Cost: spike of read traffic on primary right after writes (small —
+      most users don't re-read within 3 s).
+Failure mode: cookie lost (new device, incognito) → may see stale.
+```
+
+**Fix 2 — Causal token.** On write, the primary returns a monotonic write token (e.g., LSN). Client sends it with the next read. Replica refuses to serve until its applied LSN ≥ requested token.
+
+```
+Cost: one extra parameter on every API call; replica may briefly wait.
+Failure mode: client loses token across devices → degrades to stale, not wrong.
+```
+
+| Approach | Read scale | Implementation | Fails when |
+|---|---|---|---|
+| Read from primary always | — primary becomes bottleneck | trivial | never (but slow) |
+| Primary-pin after write | excellent | session cookie / sticky | cross-device |
+| Causal token | excellent | client carries LSN | client loses token |
+| Synchronous replication | excellent | DB-level config | adds write latency |
+
+**Surprise:** the bug appears only at low traffic (one user refreshing) or with cold caches; load tests miss it entirely. **Lesson:** "eventual is fine" is a *user-facing* claim — you must explicitly handle the read-your-writes case for any data the user can edit.
+
+### Further Reading
+
+- DDIA ch. 9 — consistency, linearizability, ordering, total order broadcast.
+- [Martin Kleppmann — Please stop calling databases CP or AP](https://martin.kleppmann.com/2015/05/11/please-stop-calling-databases-cp-or-ap.html)
+- [Jepsen — Consistency Models map](https://jepsen.io/consistency) — visual map of every model from read-uncommitted to linearizable.
+- Corbett et al., *Spanner: Google's Globally-Distributed Database* (OSDI '12) — TrueTime and external consistency.
+

@@ -220,3 +220,35 @@ Trending detection uses a **streaming aggregation** pipeline:
 - **Community notes:** Crowdsourced fact-checking system with its own ranking algorithm.
 - **Long-form content:** Extend tweet storage and display for longer articles.
 - **Decentralized identity:** Federation protocol for cross-platform social networking.
+
+---
+
+## First-time Recognition Signals
+
+When the interviewer's prompt sounds like this, the Twitter playbook (tweet store + Snowflake IDs + hybrid fan-out + Elasticsearch tweet index + trending heavy-hitters) is the right answer:
+
+- **"Post a 280-char tweet, follow others, see a home timeline"** — direct match for the microblog plus follow-graph design.
+- **"Show trending hashtags worldwide in real time"** — streaming heavy-hitters / count-min sketch over the tweet stream.
+- **"Search across every tweet ever written"** — Elasticsearch index, sharded by time.
+- **"Verified accounts with tens of millions of followers"** — celebrity / pull-on-read branch of hybrid fan-out.
+- **"Globally sortable tweet IDs"** — Snowflake (this design's birthplace).
+
+### Anti-signals (looks like this design, isn't)
+
+- **"Private 1:1 messaging app between two users"** — that's the chat-system; flat-timeline microblog logic doesn't apply.
+- **"Forum with deeply nested threaded discussions"** — Reddit/Discourse model; Twitter's reply chain is much shallower and treated as a fan-out tail.
+- **"Reverse-chronological blog from one author"** — no follow graph, no fan-out; a simple posts-by-author query suffices.
+
+## Further Reading
+
+- Twitter Engineering — "The Infrastructure Behind Twitter" series.
+- Yao Yue — "Timelines at Scale" (QCon talk; the canonical reference).
+- *System Design Interview Vol. 2* (Alex Xu), Twitter chapter.
+- "Manhattan, our real-time, multi-tenant distributed database" — Twitter blog on their KV store.
+
+## Variant Prompts
+
+- **"What if there are 100× more tweets/day?"** — partition the tweet store by `tweet_id` snowflake range; more fan-out workers; raise the celebrity threshold.
+- **"What if global timeline reads must be < 50 ms?"** — regional timeline caches with cross-region replication; precompute the visible window per user.
+- **"What if no tweet can ever be lost?"** — durable Kafka log of every tweet; replay-able fan-out; dual-region writes before ack.
+- **"What if the team only has 2 engineers?"** — Postgres for tweets + Redis for timelines + managed Elasticsearch for search; skip Manhattan-equivalent and let RDS scale handle it for a long time.

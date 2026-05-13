@@ -282,3 +282,35 @@ Where `edge_travel_time` is determined by:
 - **Multi-modal routing:** Combine driving, walking, cycling, and public transit into a single optimal route.
 - **Predictive routing:** Pre-compute likely routes based on user's calendar and commute patterns.
 - **Indoor maps:** Map building interiors (malls, airports) with indoor positioning (Wi-Fi, BLE beacons).
+
+---
+
+## First-time Recognition Signals
+
+When the interviewer's prompt sounds like this, the Google-Maps playbook (tile pyramid + road-graph routing + traffic layer + places index) is the right answer:
+
+- **"Show map tiles for any region at zoom level 0–20"** — tile pyramid in object storage + CDN.
+- **"Compute the fastest route given current traffic"** — graph routing (A* / Contraction Hierarchies) with a live traffic layer.
+- **"Predict ETA factoring live conditions"** — graph weights updated from a streaming traffic store + ML model.
+- **"Search for nearby restaurants / gas stations"** — geospatial + places index with geohash / S2 keys.
+- **"Turn-by-turn navigation with reroute on wrong turn"** — session-based routing service with incremental recompute.
+
+### Anti-signals (looks like this design, isn't)
+
+- **"Indoor map of a mall or airport"** — different topology (floor levels, narrow paths), separate floorplan data model, indoor positioning needed.
+- **"Embed a static map image in a webpage"** — that's a Mapbox / OSM tile request; no routing, no live traffic.
+- **"AR navigation overlay in a phone camera view"** — client-side AR + sensors; uses the maps backend but isn't the backend.
+
+## Further Reading
+
+- Google — S2 Geometry library docs; H3 hexagonal indexing (Uber alternative).
+- Mapbox — "Routing Algorithms Overview" and OSRM contraction-hierarchy implementation.
+- Bast et al. — "Route Planning in Transportation Networks" (the survey paper).
+- *System Design Interview Vol. 2* (Alex Xu), Google Maps chapter.
+
+## Variant Prompts
+
+- **"What if there are 100× more concurrent users?"** — more tile CDN POPs, regional routing engines partitioned by geography, autoscale per metro.
+- **"What if global p99 tile fetch must be < 50 ms?"** — heavy edge caching of tiles; precompute contraction hierarchies; prefetch tiles in the direction of travel.
+- **"What if no live location update can be lost?"** — durable session store with replication; clients buffer offline and replay.
+- **"What if the team only has 2 engineers?"** — Google Maps Platform or Mapbox SDKs for tiles + routing + places; you build only the app glue.

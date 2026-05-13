@@ -221,3 +221,35 @@ Gossip converges in O(log N) rounds for N nodes.
 - **Secondary indexes:** Allow querying by value (adds complexity and write amplification).
 - **Tiered storage:** Hot data on SSD, cold data on HDD with automatic migration.
 - **Compression:** Compress SSTables with LZ4 or Zstd to reduce storage footprint.
+
+---
+
+## First-time Recognition Signals
+
+When the interviewer's prompt sounds like this, the Dynamo-style KV playbook (consistent hashing + leaderless quorum + vector clocks + gossip) is the right answer:
+
+- **"Single-key get/put at petabyte scale"** — the canonical KV access pattern; no joins, no range queries.
+- **"Always-writable, no outage tolerated even during partitions"** — pushes you to AP / Dynamo, not CP / Spanner.
+- **"Cross-region replication with eventual consistency"** — leaderless quorum with hinted handoff fits.
+- **"Add or remove nodes without downtime, rebalance automatically"** — consistent hashing with virtual nodes is the answer.
+- **"Tolerate node failures and self-heal data"** — gossip + Merkle-tree anti-entropy is the playbook.
+
+### Anti-signals (looks like this design, isn't)
+
+- **"Strong consistency across multi-key transactions / move money between accounts"** — that's a CP store (Spanner, CockroachDB), not a Dynamo-style AP design.
+- **"Range queries — list orders for a user between two dates"** — needs an ordered store (Cassandra wide rows with clustering keys, DynamoDB sort key); pure hash-partitioned KV won't do it efficiently.
+- **"Sub-millisecond per-op with a 10 GB hot set"** — that's an in-memory cache (Redis Cluster), not a disk-backed KV store.
+
+## Further Reading
+
+- "Dynamo: Amazon's Highly Available Key-value Store" — DeCandia et al., SOSP 2007 (the foundational paper).
+- "Cassandra: A Decentralized Structured Storage System" — Lakshman & Malik.
+- *Designing Data-Intensive Applications* (Kleppmann), Chapter 5 (Replication) and Chapter 6 (Partitioning).
+- *System Design Interview Vol. 1* (Alex Xu), Chapter 6 — Design a Key-Value Store.
+
+## Variant Prompts
+
+- **"What if writes are 100× this?"** — increase node count linearly; coordinator-less write path; widen replication factor only if you also widen the network.
+- **"What if reads must be globally < 50 ms?"** — geo-aware partitioning so each region owns a primary replica; read-local with eventual cross-region replication.
+- **"What if we cannot lose any write, ever?"** — N=5, R=3, W=3 (sync quorum), enable hinted handoff, run Merkle anti-entropy hourly, snapshot to S3.
+- **"What if the team only has 2 engineers?"** — managed DynamoDB or Cassandra-as-a-service (ScyllaDB Cloud, Astra); the design discussion is the same but you do not operate it.

@@ -139,3 +139,60 @@ Consistent hashing is the **most interview-relevant** load balancing concept bec
 - **Cassandra** uses a variant (token ring) for data distribution across nodes in a cluster.
 
 **What interviewers want to hear:** "Consistent hashing minimizes key redistribution during scale events from O(N) to O(K/N), where K is the number of keys and N is the number of servers."
+
+---
+
+## First-time Recognition Signals
+
+When you read a brand-new system design prompt, this building block is the right tool if you see:
+
+- **"Horizontally scale the web tier / N stateless app servers behind a single endpoint"** — the textbook load-balancer use case.
+- **"Health-check instances and drain unhealthy ones"** — LBs (NLB/ALB/HAProxy/Envoy) do this in seconds, which DNS cannot.
+- **"Sticky sessions / route the same user to the same server"** — Layer-7 LB with cookie- or header-based affinity.
+- **"Terminate TLS at the edge so backends speak plain HTTP"** — TLS offload is a core LB feature.
+- **"Route `/api/*` to service A and `/static/*` to service B"** — Layer-7 path-based routing.
+
+### Anti-signals (looks like this building block, isn't)
+
+- **"Route users to the nearest region"** — single-region LBs cannot do this; use GeoDNS or a global accelerator in front of regional LBs.
+- **"Distribute work across consumer instances of a queue"** — that is consumer-group / partition assignment in the message queue, not an HTTP load balancer.
+- **"Permanent A/B split for an experiment"** — better handled with a feature flag or API gateway rule than with LB weights, which are operationally awkward to change per experiment.
+
+---
+
+### Intuition
+
+A load balancer is the host at a busy restaurant: when a party walks in, the host quickly picks a free table (or sends them to the bar if their specific waiter is booked, or turns them away if every table is taken). Pick the wrong assignment policy and one waiter gets slammed while three stand idle. The skill is matching the policy to the workload: round-robin for identical tables, sticky-by-customer when a waiter knows your order, least-loaded when meals vary wildly in prep time.
+
+### Worked Example: Sizing an L7 pool for 50k QPS
+
+Your service does 50,000 requests/sec at peak. A single instance handles 5,000 QPS at 70 % CPU. How many instances do you need?
+
+```
+Base                                       = 50,000 / 5,000 = 10 instances
++ Headroom (target 70% utilization, not 100%) → 10 / 0.7   ≈ 15 instances
++ AZ-failure margin (3 AZs, survive losing 1)
+  Surviving 2/3 of pool must still handle peak
+  Total = 15 / (2/3) ≈ 22.5             → 23 instances
++ Operational safety (deploy/rolling, +10%) → ~25 instances
+```
+
+Or, the Google-SRE shortcut: `ceil(base × 1.2 × 1.5) ≈ 18` if you're aggressive on headroom. The exact answer depends on SLO tolerance — but the lesson is that the naive "10 instances" answer is **wrong by roughly 2×**: headroom + failure budget roughly double the count.
+
+| Component | Value |
+|---|---|
+| Naive (peak / per-instance) | 10 |
+| With CPU headroom | 15 |
+| With AZ-failure budget | 23 |
+| With ops headroom | 25 |
+
+**Algorithm choice for this pool:** if requests are uniform, round-robin is fine; if you have sticky session state, consistent-hash; if backend latencies vary, **Power of Two Choices** (pick 2 random, send to the less loaded) consistently outperforms naive least-connections under high load — for the cost of one extra random number.
+
+### Further Reading
+
+- [HAProxy configuration manual](https://www.haproxy.org/) — canonical OSS L4/L7 balancer; algorithms and stick-tables.
+- [NGINX load balancing guide](https://docs.nginx.com/nginx/admin-guide/load-balancer/http-load-balancer/)
+- [Envoy architecture overview](https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/intro/arch_overview) — modern L7 proxy used in service meshes.
+- Mitzenmacher, *The Power of Two Random Choices: A Survey of Techniques and Results* (1996) — the paper showing why "pick 2, choose less loaded" beats least-conn at scale.
+- *Site Reliability Engineering* (Google) ch. 19 — "Load Balancing at the Frontend" walks Maglev's design.
+

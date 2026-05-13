@@ -218,3 +218,35 @@ Normal pipeline takes 15 minutes. For breaking news:
 - **Entity-enriched results:** Show rich suggestions with images, categories, or prices alongside the query text.
 - **Federated learning:** Train personalized models on-device without collecting individual query histories.
 - **Zero-prefix suggestions:** Show trending/personalized suggestions before the user types anything.
+
+---
+
+## First-time Recognition Signals
+
+When the interviewer's prompt sounds like this, the typeahead playbook (trie / FST with per-node top-K + offline rebuild + edge cache) is the right answer:
+
+- **"Show top 10 suggestions as the user types each character"** — direct prefix-match latency problem.
+- **"Frequency-ranked / most popular first"** — top-K precomputed at each trie node.
+- **"< 50 ms per keystroke at global scale"** — edge cache + precomputed top-K + client-side debounce.
+- **"Surface trending queries in real time"** — streaming aggregator (Flink/Kafka Streams) updating the trie hourly.
+- **"Spell-correct or fuzzy match the prefix"** — trie + edit-distance / FST with permitted edits.
+
+### Anti-signals (looks like this design, isn't)
+
+- **"Full-text search across a product catalog with filters"** — that's Elasticsearch with facets, not a prefix typeahead.
+- **"Recommend products the user might like"** — that's a recsys (collaborative filtering / embeddings), not frequency-ranked prefixes.
+- **"Autocomplete code in an IDE"** — language-server (LSP) is syntax/type aware, not frequency-ranked text.
+
+## Further Reading
+
+- *System Design Interview Vol. 1* (Alex Xu), Chapter 13 — Design Search Autocomplete.
+- Elasticsearch blog — "Suggesters: completion suggester" (the alternative implementation).
+- LinkedIn Engineering — "Did you mean Galene?" — their search-infra evolution.
+- Google Research — "Indexing Tens of Trillions of Web Pages" for the data-pipeline shape.
+
+## Variant Prompts
+
+- **"What if QPS is 100× higher (10M QPS)?"** — more trie shards (sharded by first 2 chars), more edge POPs, aggressive CDN caching of suggestions.
+- **"What if latency must be < 20 ms globally?"** — heavier client-side debounce (200 ms), edge POPs serve cached top-10 by prefix; only rare prefixes hit origin.
+- **"What if no query can be lost from the trends pipeline?"** — durable query log (Kafka) with checkpointed aggregator; replay-able trie build.
+- **"What if the team only has 2 engineers?"** — Elasticsearch managed cluster + completion suggester; skip the custom trie.

@@ -116,3 +116,71 @@ The shard key is the most critical decision. A good shard key has:
 ## Deep Dive: Resharding Without Downtime
 
 Resharding (adding shards to a running system) is the operational nightmare of sharding. The Vitess approach: (1) Add new shards with empty databases. (2) Start replicating data from old shards to new shards using binlog streaming. (3) Once caught up, atomically update the routing table to point to new shards. (4) Drain old shards. This is called **online resharding** and avoids downtime. In interviews, mention that resharding is hard but solvable with proxy-based architectures, and name Vitess as a concrete example.
+
+---
+
+## First-time Recognition Signals
+
+When you read a brand-new system design prompt, this pattern is the right tool if you see:
+
+- **"Choose how to partition this dataset"** (and the interviewer is fishing for a *strategy*, not just "shard it") — name range, hash, directory, consistent hashing.
+- **"Avoid hot keys / hot shards"** — consistent hashing with virtual nodes; or key salting; or split-and-replicate the hot key.
+- **"Add or remove nodes with minimum reshuffling"** — consistent hashing is the textbook answer.
+- **"Multi-tenant SaaS: one tenant per shard, or pool small tenants"** — directory-based or hybrid sharding.
+- **"Time-series: drop old data wholesale"** — range sharding by time enables cheap retention.
+
+### Anti-signals (looks like this pattern, isn't)
+
+- **"Tiny dataset, no growth expected"** — picking a sharding strategy is premature; revisit when growth is real.
+- **"Cross-shard joins on every query"** — denormalize, change the shard key, or rethink the access pattern; sharding strategy alone won't save you.
+- **"Single-region MVP with one DB"** — pick the shard key on paper but defer implementation; pre-sharding is a frequent over-engineering trap.
+
+---
+
+### Intuition
+
+Once you've decided to shard, the next question is *how*: by range, by hash, or by directory. Hash sharding gives uniform distribution but kills range scans; range sharding preserves locality but creates hot shards; directory sharding (a lookup table) is flexible but adds a hop. **Consistent hashing with virtual nodes (vnodes)** is the modern compromise — most of the locality benefits, almost no rebalancing cost when you add or remove nodes.
+
+### Worked Example: Resharding via consistent hash with vnodes
+
+Current cluster: **N = 8** physical nodes, each owning 256 vnodes (2,048 vnodes total on the ring).
+
+You add a 9th node. With **naive hash sharding** (`hash(key) % N`):
+
+```
+Old: hash % 8
+New: hash % 9
+Keys that stay on the same node: ≈ 1/9 ≈ 11%
+Keys that MOVE:                 ≈ 89% of all data — catastrophic
+```
+
+With **consistent hashing + vnodes**:
+
+```
+9th node picks 256 vnodes from the ring (uniformly random slots).
+Each vnode it takes used to belong to some existing node.
+Expected fraction moved = 1 / (N + 1) = 1 / 9 ≈ 11.1%
+```
+
+Only `1/9` of data moves to the new node, evenly drained from the other 8.
+
+**Concrete numbers — 10 TB cluster, adding node N+1:**
+
+| Approach | Data moved | Network egress | Time to drain (10 Gbps) |
+|---|---|---|---|
+| `hash % N` (modulo rehash) | 8.89 TB (~89 %) | 8.89 TB | ≈ 2 hours |
+| Consistent-hash + vnodes | **1.11 TB (~11 %)** | 1.11 TB | ≈ 15 min |
+
+**Hot-spot handling with vnodes:** even if one *physical* node has a hotter dataset (a celebrity's keys), the load is split across its 256 vnodes — and you can shed load by reassigning some vnodes to other physical nodes without moving the rest of the data.
+
+**Adding more nodes:** the 10th node moves `1/10`, the 11th `1/11` — cost per added node *shrinks* as the cluster grows (opposite of the modulo-hash horror).
+
+**Surprise:** consistent hashing's *uniformity* depends entirely on vnodes-per-physical-node. With 1 vnode/node, variance can hit 50–100 % across nodes; with 256+, variance drops below 5 %. **Lesson:** always use vnodes (Cassandra defaults to 256), never raw consistent hashing.
+
+### Further Reading
+
+- DeCandia et al., *Dynamo: Amazon's Highly Available Key-value Store* (SOSP '07) — the consistent-hash + vnode formula.
+- [Apache Cassandra — Data distribution and virtual nodes](https://cassandra.apache.org/doc/latest/cassandra/architecture/dynamo.html)
+- [Discord — How Discord Stores Billions of Messages (2017)](https://discord.com/blog/how-discord-stores-billions-of-messages) — real Cassandra resharding lessons; precursor to the ScyllaDB migration.
+- Karger et al., *Consistent Hashing and Random Trees* (STOC '97) — the original paper.
+

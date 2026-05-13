@@ -141,3 +141,63 @@ This is a **common sub-problem** in Instagram, Pinterest, or any UGC (User Gener
 - **Asynchronous processing** — the upload API returns immediately; the client polls or receives a push notification when processing completes.
 - **Idempotent processing** — if the same message is processed twice, the output is identical (overwrite with same content, do not duplicate).
 - **Retry with DLQ** — failed processing (corrupt image, moderation service outage) goes to a dead letter queue for manual inspection.
+
+---
+
+## First-time Recognition Signals
+
+When you read a brand-new system design prompt, this building block is the right tool if you see:
+
+- **"Upload, store, and serve photos / videos / audio / PDFs / user files"** — object storage (S3, GCS, Azure Blob) is the default, not a database.
+- **"Static assets: JS, CSS, fonts, images"** served to a worldwide audience — origin in S3, edge in CloudFront/Akamai/Cloudflare.
+- **"Files are write-once, read-many and don't change after upload"** — exactly the shape blob stores are optimized for.
+- **"Geographically distributed users / multi-region read latency must be < 50 ms"** — a CDN with origin in blob storage is the lever.
+- **"Signed URLs / time-limited access to private files"** — blob stores natively support presigned URLs; doing this in a DB is awkward.
+
+### Anti-signals (looks like this building block, isn't)
+
+- **"Many small mutations per second to the same record"** (counter, inventory, balance) — blob stores have second-scale eventual consistency on overwrites; use a KV / SQL store.
+- **"Need to query / filter / aggregate inside the files"** — blob storage is opaque per-object; index the metadata in a separate DB.
+- **"Per-byte access control with row-level security"** — possible via signed URLs but heavy; structured data with row-level permissions belongs in a database.
+
+---
+
+### Intuition
+
+Blob storage is the modern attic: cheap, infinite-feeling, and dumb. It stores opaque objects keyed by name and offers no fast way to ask "find all PNGs over 1 MB" — it's not a database. A CDN bolts a global cache on top of that attic so users in São Paulo don't have to fetch a Tokyo-origin video on every play. Your real design knobs are **cache key design** (what counts as the same object?), **hit ratio target** (how often the edge avoids origin?), and **tier strategy** (does every POP hold a hot copy, or do regional shields fan in?).
+
+### Worked Example: Sizing CDN for a 5 Gbps origin
+
+You serve video. Origin egress is 5 Gbps at peak, and you want **95 %** of bytes served from the CDN.
+
+**Implied scale:**
+
+```
+If 5 Gbps = the 5% that misses, total user demand = 5 Gbps / 0.05 = 100 Gbps
+Target CDN egress = 95 Gbps
+Per typical mid-tier POP egress ≈ 5 Gbps  →  POPs needed = 95 / 5 ≈ 19 POPs
+```
+
+**Cache key is the single highest-leverage decision:**
+
+| Cache key strategy | Hit ratio | Why |
+|---|---|---|
+| Full URL including query string | 60–70 % | Different `?token=...` per user → each is a fresh object |
+| URL **without** auth params | 85–90 % | Canonical content cached; auth still validated at edge |
+| URL + `Accept-Encoding` (vary) | 92–95 % | One gzip + one brotli cached; common best practice |
+| Content-hash keying (advanced) | 97 %+ | De-dupes "same bytes, different URL" for image variants |
+
+**Surprise:** a naive cache key including signed-URL tokens turns your 95 % target into ~60 % overnight. Stripping auth params from the cache key (while still validating them at the edge) is typically a **2–3× reduction in origin egress with no extra hardware**. **Lesson:** cache-key design beats POP count for hit ratio.
+
+For the 95 % target, also stack:
+- **Tiered caching** (edge POP → regional shield → origin): turns 19 POP-miss streams into 1–3 regional fans, protecting origin.
+- **`Cache-Control: s-maxage=86400, stale-while-revalidate=3600`**: serves stale on origin failure, smooths refresh.
+- **Range request alignment**: CDNs cache 1 MB chunks; align video segment boundaries to chunk boundaries to avoid cross-chunk reads.
+
+### Further Reading
+
+- [AWS Storage Blog — S3 design tenets and durability](https://aws.amazon.com/blogs/storage/) — erasure coding, 11-nines durability math.
+- [Netflix Open Connect overview](https://openconnect.netflix.com/en/) — purpose-built CDN, fleet sizing, cache fill strategy.
+- [Cloudflare — Cache keys](https://developers.cloudflare.com/cache/how-to/cache-keys/) — what to include and what to strip.
+- [Fastly — Best practices: cache keys](https://www.fastly.com/documentation/guides/concepts/cache-keys/) — surrogate keys and per-object purging.
+

@@ -200,3 +200,35 @@ Reuse the KGS approach from URL shortener:
 - **Rich formatting:** Support Markdown rendering alongside raw text.
 - **Burn after reading:** Self-destructing pastes that disappear after first read.
 - **Encryption:** Client-side encryption for private pastes.
+
+---
+
+## First-time Recognition Signals
+
+When the interviewer's prompt sounds like this, the Pastebin playbook (KGS + SQL metadata + S3 body + CDN) is the right answer:
+
+- **"Users paste text snippets and get a shareable URL"** — direct write-once / read-many pattern with a body to store.
+- **"Support pastes up to 10 MB / large bodies"** — body size pushes you off the URL-shortener row-only design and onto object storage.
+- **"Pastes expire after N days / burn-after-read one-time view"** — paste-lifecycle sweeper + TTL.
+- **"Show syntax highlighting and a view count"** — split metadata (highlight language, view count) from content (the text blob).
+- **"Anyone with the link can view, no login required"** — unguessable random key + public-read object, the classic Pastebin posture.
+
+### Anti-signals (looks like this design, isn't)
+
+- **"Real-time collaborative editing of a shared document"** — that's an OT/CRDT design (Google Docs), not write-once Pastebin.
+- **"Store user-uploaded images / videos with a feed"** — same metadata+blob shape but the design pivots to Instagram/YouTube (transcode, thumbnails, CDN).
+- **"Run pasted code snippets and return the output"** — that's a sandboxed execution service (Replit, LeetCode); Pastebin only stores, never executes.
+
+## Further Reading
+
+- GitHub Engineering — search "How Gist works" / GitHub's repo and gist storage architecture.
+- *System Design Interview Vol. 1* (Alex Xu), Chapter 9 — Pastebin (extends the URL Shortener chapter).
+- AWS blog — "Using Amazon S3 pre-signed URLs" — exact pattern for serving private bodies.
+- *Designing Data-Intensive Applications* (Kleppmann), Chapter 4 — Encoding and compression for the body store.
+
+## Variant Prompts
+
+- **"What if writes are 100× this?"** — partition KGS, route writes to a write-region, async fan-out to S3 cross-region replication.
+- **"What if reads must be globally < 50 ms?"** — CDN-cache the body keyed by short_key; CloudFront + S3 Multi-Region Access Points; metadata reads via regional replicas.
+- **"What if we cannot lose a paste, ever?"** — S3 versioning + cross-region replication, MD5/SHA on every paste, async restore on integrity failure.
+- **"What if the team only has 2 engineers?"** — Postgres metadata + S3 body, UUIDv7 encoded as Base62 (no custom KGS), Cloudflare in front.

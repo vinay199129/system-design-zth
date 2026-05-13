@@ -198,3 +198,35 @@ Before dedup or enqueue, normalize URLs:
 - **Distributed frontier:** Use Kafka or a distributed queue for the URL frontier across multiple crawl clusters.
 - **Content extraction:** Add NLP pipeline for entity extraction, summarization, and indexing.
 - **Adaptive politeness:** Adjust crawl rate based on server response times and error rates.
+
+---
+
+## First-time Recognition Signals
+
+When the interviewer's prompt sounds like this, the web-crawler playbook (BFS frontier + per-host queues + Bloom dedup + politeness) is the right answer:
+
+- **"Index the entire web / discover new pages at scale"** — direct crawler match.
+- **"Respect robots.txt and don't hammer any single host"** — per-host queue with `Crawl-delay` is the politeness backbone.
+- **"Detect duplicate URLs at internet scale without storing every one"** — Bloom filter for URL dedup.
+- **"Re-crawl popular pages frequently (CNN every 10 min, blog every week)"** — priority queue with freshness scoring.
+- **"Handle spider traps and infinite calendars"** — URL normalization, depth cap, and pattern detection.
+
+### Anti-signals (looks like this design, isn't)
+
+- **"Scrape one specific site for product prices"** — that's a focused scraper (Scrapy + cron), not a distributed BFS crawler.
+- **"Subscribe to RSS feeds and pull new articles"** — that's pub/sub or pull-on-schedule, no BFS graph traversal.
+- **"Crawl an internal intranet wiki of 10k pages"** — single-process BFS is sufficient; you don't need Bloom filters or a frontier service.
+
+## Further Reading
+
+- "Mercator: A Scalable, Extensible Web Crawler" — Heydon & Najork (the textbook reference).
+- "The Anatomy of a Large-Scale Hypertextual Web Search Engine" — Brin & Page (Google paper, §4 covers the crawler).
+- *System Design Interview Vol. 1* (Alex Xu), Chapter 10 — Design a Web Crawler.
+- Bloom 1970 — original Bloom-filter paper; *Cuckoo Filter* (Fan et al., 2014) for a modern alternative.
+
+## Variant Prompts
+
+- **"What if you need to crawl 100× more pages?"** — partition the frontier by host-hash across more fetcher pools; add more parser/dedup workers; scale the content store horizontally.
+- **"What if freshness for top sites must be < 5 minutes?"** — accept push signals (sitemaps, RSS, IndexNow) for the high-priority tier; ETag/If-Modified-Since per URL.
+- **"What if no URL can ever be missed?"** — durable frontier (Kafka log), checkpoint Bloom-filter state, replay-able BFS.
+- **"What if the team only has 2 engineers?"** — start from Common Crawl public datasets + a small delta crawler; defer the full pipeline.

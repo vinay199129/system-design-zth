@@ -34,6 +34,31 @@ sequenceDiagram
     end
 ```
 
+#### Read-Through vs Write-Through (side-by-side)
+
+In **read-through**, the cache itself is responsible for fetching from the DB on miss — the application talks only to the cache. In **write-through**, every write goes through the cache synchronously so a subsequent read is guaranteed fresh.
+
+```mermaid
+flowchart LR
+    subgraph RT[Read-Through]
+        direction TB
+        A1[App] -- "1. GET key" --> C1[Cache]
+        C1 -- "2. miss: fetch" --> D1[(DB)]
+        D1 -- "3. row" --> C1
+        C1 -- "4. populate + return" --> A1
+    end
+
+    subgraph WT[Write-Through]
+        direction TB
+        A2[App] -- "1. SET key=v" --> C2[Cache]
+        C2 -- "2. sync write" --> D2[(DB)]
+        D2 -- "3. ack" --> C2
+        C2 -- "4. ack" --> A2
+    end
+```
+
+Cache-aside (shown above) leaves the DB fetch to the app; read-through hides it inside the cache. Write-through keeps cache and DB consistent at write time, but doubles write latency (you wait for both).
+
 ### Caching Strategies Comparison
 
 | Strategy | Write Path | Read Path | Consistency | Use Case |
@@ -130,3 +155,54 @@ The **cache stampede** (also called thundering herd) is the most dangerous cachi
 4. **External Refresh (Background Worker):** A dedicated worker process refreshes popular cache keys before they expire. The cache TTL is set very high, and the worker handles freshness. This completely decouples read traffic from cache misses.
 
 **What to say in an interview:** "For high-traffic keys, I would use a locking mechanism with a fallback to stale data. The first request acquires a lock and refreshes the cache, while concurrent requests receive the slightly stale previous value. This prevents database overload while keeping latency low."
+
+---
+
+## First-time Recognition Signals
+
+When you read a brand-new system design prompt, this building block is the right tool if you see:
+
+- **"Read-heavy workload, read:write ratio of 10:1 or higher"** — the database is about to be the bottleneck; cache the hot read path.
+- **"Reduce p99 latency to < 100 ms"** with data that is reused across requests — Redis/Memcached lookups are 1-5 ms vs 10-50 ms for a hot SQL query.
+- **"Trending / hot keys / celebrity post / viral content"** — a few items get most of the reads; cache them aggressively (and worry about hot-key stampede).
+- **"Stale-by-N-seconds is acceptable"** — the prompt explicitly tolerates eventual freshness, opening cache-aside or TTL-based caching.
+- **"Same expensive computation repeated for many users"** — feed ranking, leaderboards, search suggestions — cache the *result*, not just the inputs.
+
+### Anti-signals (looks like this building block, isn't)
+
+- **"Strong consistency on every read, no stale data ever"** — caching introduces a stale window; either skip it or use write-through with care, and never claim caching is "free" here.
+- **"Write-heavy / unique-per-request data"** (e.g., raw analytics events) — cache hit rate will be near zero; you'd just be adding a layer.
+- **"Secrets / PII that must not live in shared memory across tenants"** — caches are tempting but scoping and encryption complicate things; consider per-tenant in-process caches or skip.
+
+---
+
+### Intuition
+
+A cache is a sticky note on your desk — everything you've looked up recently is right there instead of buried in the filing cabinet. The trick is two-fold: knowing *what* to write down (read-heavy keys with reuse) and *when to cross things out* (invalidation). When a hot sticky note gets ripped off at exactly the wrong moment — say, the lunch rush — every clerk runs to the filing cabinet at once. That's the cache stampede, and it can topple the whole office.
+
+### Worked Example: Stampede math at 1M QPS hot key, 60 s TTL
+
+A celebrity profile is fetched **1,000,000 times/sec**. Cache TTL = 60 s. The underlying DB query takes 50 ms.
+
+**Baseline (no protection):** when the key expires, in the next 50 ms (the DB compute window), `1,000,000 × 0.05 = 50,000` concurrent requests all miss and stampede the DB. The DB is probably sized for ~10k QPS — so it dies, and the cascade begins.
+
+**Mitigation 1 — Mutex lock.** Only one request fetches; others wait or serve stale. DB load drops to *exactly one query per expiry* = **1/60 ≈ 0.017 QPS**. But waiters either block (p99 spikes to 50 ms) or return stale.
+
+**Mitigation 2 — Probabilistic early expiration (XFetch).** Each request refreshes with probability `exp(-β × delta_remaining / compute_time)`. As TTL nears expiry, probability climbs. With β=1, compute=50 ms, refreshes spread over the last ~1 s of TTL.
+
+| Strategy | Peak DB QPS on a hot-key expiry | p99 latency on miss | Complexity |
+|---|---|---|---|
+| None | 50,000 | 50 ms (everyone hits DB) | trivial |
+| Mutex (single-flight) | 1 | 50 ms (everyone waits) or stale | medium |
+| XFetch (probabilistic) | ~50 (spread over 1 s) | unchanged ~5 ms | low |
+
+**Surprise:** XFetch gives near-optimal protection *without* the latency cliff of locking — but only if your refresh function is idempotent. For very large fan-out, combine both: XFetch + a single-flight lock at the application. **Lesson:** for any key whose `QPS × compute_ms > DB_capacity_QPS`, you need explicit stampede protection — TTL alone is a loaded gun.
+
+### Further Reading
+
+- Nishtala et al., *Scaling Memcache at Facebook* (NSDI '13) — lease-based stampede prevention and gutter pools at planetary scale.
+- Alex Xu, *System Design Interview vol. 1*, ch. 5 — cache layer & invalidation patterns.
+- DDIA ch. 1 — reliability, scalability, maintainability fundamentals.
+- [Discord Engineering — How Discord Stores Trillions of Messages](https://discord.com/blog/how-discord-stores-trillions-of-messages) — what happens when the cache + DB choice meets billions of hot reads.
+- Vattani et al., *Optimal Probabilistic Cache Stampede Prevention* (VLDB '15) — the XFetch paper.
+

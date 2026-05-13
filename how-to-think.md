@@ -237,3 +237,140 @@ If requirements change to need [Y], we would modify [component] by [change]."
 > **Start simple. Add complexity only when the numbers demand it.**
 
 A URL shortener for 100 users doesn't need sharding. Twitter with 500M users does. Let the requirements and estimation drive your architecture.
+
+---
+
+## Pattern Identification Workout
+
+Read each prompt below. Without scrolling, write down (a) the 2-3 building blocks you'd reach for first, (b) the partition / sharding key, (c) the rough read:write ratio. Then expand the answer to see what most interviewers expect. Budget 1-2 minutes per prompt — these are recognition drills, not full designs.
+
+### Prompt 1 — "Design a service that converts a 100-char URL into a 6-char short code; 100M URLs stored, 10K redirects/s peak"
+
+<details>
+<summary>Reveal expected answer</summary>
+
+- **Building blocks:** Cache (Redis for hot codes), KV store (DynamoDB / Cassandra for `code → URL`), Key Generation Service (counter + base62). See Phase 1 modules 3, 5; Phase 4 module 1.
+- **Partition key:** `short_code` on the read path; `created_at` on a secondary analytics index.
+- **Ratio:** read-heavy, ~1:1000 (one write per thousand redirects). Cache hit ratio 90%+ on hot links.
+- **Why:** classic write-once-read-many. The write path is trivial; spend your air-time on the redirect latency budget and the analytics fan-out.
+
+</details>
+
+### Prompt 2 — "Push a breaking-news notification to all 50M users of an app within 60 seconds"
+
+<details>
+<summary>Reveal expected answer</summary>
+
+- **Building blocks:** Pub-sub (Kafka or SNS), fan-out workers, per-platform push gateways (APNs / FCM), DLQ + retry. See Phase 1 modules 7, 8; Phase 3 fan-out + circuit-breaker modules.
+- **Partition key:** `device_token` hashed across worker shards; `region` for locality-aware delivery.
+- **Ratio:** burst-write — 0 traffic baseline, then 50M deliveries in 60s (~830K/s). Reads are zero; this is a pure fan-out problem.
+- **Why:** the trick is bounded parallelism. Don't enqueue 50M individual jobs in one transaction — batch by region, by platform, by user segment.
+
+</details>
+
+### Prompt 3 — "Inventory counter for a flash sale: 10K items, must never go negative, 100K buyers in the first second"
+
+<details>
+<summary>Reveal expected answer</summary>
+
+- **Building blocks:** Strongly-consistent store (Redis with Lua decrement, or a relational row with `UPDATE … WHERE qty > 0`), distributed lock or single-writer queue, idempotency keys. See Phase 2 consistency module; Phase 3 saga / idempotency.
+- **Partition key:** `sku_id`.
+- **Ratio:** write-heavy and contention-bound on a single key.
+- **Why:** this is the textbook "hot key" + "exactly-once" problem. Cache-aside is wrong here; you want atomic decrement at the source of truth. If you mention CRDTs, explain why they're a bad fit (counters can be negative under merge).
+
+</details>
+
+### Prompt 4 — "File-upload UI that shows live progress for files up to 5 GB"
+
+<details>
+<summary>Reveal expected answer</summary>
+
+- **Building blocks:** Blob storage (S3) with multipart upload + presigned URLs, an upload-session record in a small RDBMS, optional WebSocket for progress. See Phase 1 module 5 (blob), Phase 1 module 4 (API).
+- **Partition key:** `upload_session_id`.
+- **Ratio:** write-heavy on the blob side; metadata reads are negligible.
+- **Why:** the trap is routing 5 GB through your API tier. The right answer is presigned URLs — the client uploads parts directly to S3 and your server only tracks the manifest.
+
+</details>
+
+### Prompt 5 — "Distributed-trace system for 500 microservices producing 2M spans/sec"
+
+<details>
+<summary>Reveal expected answer</summary>
+
+- **Building blocks:** Append-only event log (Kafka), columnar store (ClickHouse / BigQuery), pub-sub for live tailing, sampling layer at the SDK. See Phase 1 module 7, Phase 2 module on event-driven, Phase 5 metrics design.
+- **Partition key:** `trace_id` (so all spans of one trace land together).
+- **Ratio:** extreme write-heavy (2M/s ingest, ~10/s human reads). Compression and tiered storage are mandatory.
+- **Why:** the volume forces head-based or tail-based sampling. Mention the trade-off: head sampling is cheap but blind to errors; tail sampling buffers and is expensive.
+
+</details>
+
+### Prompt 6 — "Outbound email pipeline that must retry on bounce and back off if the SMTP provider 429s"
+
+<details>
+<summary>Reveal expected answer</summary>
+
+- **Building blocks:** Message queue with delayed retries (SQS, RabbitMQ TTL, or Kafka with retry topics), circuit breaker around the SMTP client, DLQ + alarm. See Phase 1 module 7, Phase 3 circuit-breaker module.
+- **Partition key:** `tenant_id` (so a noisy tenant can't starve the queue for everyone else).
+- **Ratio:** moderate write, retries dominate worst-case load (10×).
+- **Why:** the gotcha is per-tenant fairness. A single uniform queue is the wrong default — use weighted/sharded queues so a runaway customer is rate-limited in isolation.
+
+</details>
+
+### Prompt 7 — "Concert-seat booking: 50K seats, first-come-first-served, no double-bookings"
+
+<details>
+<summary>Reveal expected answer</summary>
+
+- **Building blocks:** Consensus on the seat-state machine (Redis with SET-NX + TTL, or a transactional DB row per seat), idempotent reservation tokens, short-lived hold (~5 min) before payment. See Phase 2 consensus module, Phase 3 idempotency + saga.
+- **Partition key:** `event_id` for the hot 5-minute window; `seat_id` within event.
+- **Ratio:** write-heavy on burst; high contention on premium seats.
+- **Why:** the killer detail is the "hold then confirm" two-phase commit equivalent. Don't release a seat to the next user until either the timer expires or payment fails — and make the confirm step idempotent.
+
+</details>
+
+### Prompt 8 — "Reading-list app that syncs across phone, tablet, and laptop, including offline edits"
+
+<details>
+<summary>Reveal expected answer</summary>
+
+- **Building blocks:** Per-user document store with CRDTs (or last-write-wins with a vector clock fallback), local write-ahead log on each device, pub-sub for change notifications. See Phase 2 consistency module, Phase 3 event-sourcing.
+- **Partition key:** `user_id`.
+- **Ratio:** balanced; offline-write bursts when reconnecting.
+- **Why:** "offline + multi-device" is the trigger phrase for CRDT or operational-transform. Name one (e.g. observed-remove set or Yjs's Y.Doc) so the interviewer knows you've read Kleppmann ch. 5.
+
+</details>
+
+### Prompt 9 — "Photo upload that must be searchable by face within 30 seconds of upload"
+
+<details>
+<summary>Reveal expected answer</summary>
+
+- **Building blocks:** Blob (S3) + metadata DB, async ML inference pipeline (queue → GPU worker → embedding), vector index (Milvus / Pinecone / pgvector). See Phase 1 module 5, Phase 5 search / ML modules.
+- **Partition key:** `photo_id` for blobs; `user_id` + `embedding` for the index.
+- **Ratio:** write-heavy on upload, read-heavy on search; ML inference is the bottleneck (~hundreds of ms per face).
+- **Why:** call out the pipeline: upload → enqueue → embed → index. The 30-second SLA is achievable with batched GPU inference and ANN (approximate nearest neighbour) at query time.
+
+</details>
+
+### Prompt 10 — "Cross-region active-active write app: users in US and EU both writing to the same product catalog"
+
+<details>
+<summary>Reveal expected answer</summary>
+
+- **Building blocks:** Multi-leader replication (Cassandra, DynamoDB Global Tables, or Spanner), per-region write endpoints, conflict-resolution policy (LWW with hybrid logical clocks, or per-field merge). See Phase 2 replication module.
+- **Partition key:** `product_id`; region inferred from client geo-routing.
+- **Ratio:** moderate write, heavy read; conflict rate is low but non-zero.
+- **Why:** the question is *how do you resolve conflicting writes?* Quote Spanner (TrueTime + external consistency) for the strong-consistency answer, or DynamoDB Global Tables (LWW with vector clock + custom resolver) for the AP answer. Mention the cost: cross-region commit latency is ≥ 50ms even on private fibre.
+
+</details>
+
+### Self-Scoring
+
+For each prompt, give yourself one point per correct component (building block, partition key, ratio). Out of 30 total points:
+
+- **24-30:** you can pattern-match in interviews; focus next on depth + trade-offs.
+- **18-23:** solid foundation; review the 2-3 modules whose prompts tripped you up.
+- **12-17:** you need more reps on Phase 1-2 modules before tackling Phase 4-5 full designs.
+- **0-11:** read `how-to-think.md` § The RESHADED Framework cold one more time, then redo the workout tomorrow.
+
+Re-take the workout every 7 days during Phase 4-6. The drill is cheap; the recognition is the moat.

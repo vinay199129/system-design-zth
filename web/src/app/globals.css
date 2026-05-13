@@ -1,0 +1,130 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  /* Tells the browser to render native UI (date pickers, scrollbars,
+     dropdowns, autofill) in the right theme. */
+  html {
+    color-scheme: light;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+  html.dark {
+    color-scheme: dark;
+  }
+
+  body {
+    text-rendering: optimizeLegibility;
+  }
+
+  /* Global keyboard focus indicator — visible on every interactive element. */
+  :focus-visible {
+    outline: 2px solid theme('colors.brand.500');
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+  /* Don't show the brand ring on form inputs that already define their own
+     focus styling (`focus:ring-2 focus:ring-brand-500`). */
+  input:focus-visible,
+  select:focus-visible,
+  textarea:focus-visible {
+    outline-color: transparent;
+  }
+
+  .scrollbar-thin {
+    scrollbar-width: thin;
+  }
+  .scrollbar-thin::-webkit-scrollbar {
+    height: 6px;
+    width: 6px;
+  }
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    background: rgb(148 163 184 / 0.4);
+    border-radius: 9999px;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Shiki dual-theme — toggles light/dark blocks based on .dark on <html>.
+   --------------------------------------------------------------------------- */
+@layer components {
+  .shiki {
+    color: var(--shiki-light);
+    background-color: var(--shiki-light-bg);
+  }
+  .shiki span {
+    color: var(--shiki-light);
+  }
+
+  html.dark .shiki {
+    color: var(--shiki-dark);
+    background-color: var(--shiki-dark-bg);
+  }
+  html.dark .shiki span {
+    color: var(--shiki-dark);
+  }
+
+  .prose pre.shiki {
+    @apply rounded-lg text-[13px] leading-relaxed border border-slate-200 dark:border-slate-800 p-4 bg-slate-50 dark:bg-slate-950;
+    overflow-x: auto;
+  }
+
+  /* Inline code — distinct from prose defaults, theme-matched. */
+  .prose code:not(pre code) {
+    @apply rounded-md bg-brand-50 dark:bg-brand-950/40 text-brand-800 dark:text-brand-200 border border-brand-100 dark:border-brand-900 px-1.5 py-0.5 text-[0.875em] font-medium;
+  }
+  .prose code::before,
+  .prose code::after {
+    content: none !important;
+  }
+
+  /* Mermaid diagrams: center, frame, breathe. */
+  .prose pre.mermaid {
+    @apply flex justify-center my-6 px-4 py-4 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-x-auto;
+    color: inherit;          /* let mermaid SVG own its colors */
+  }
+  .prose pre.mermaid svg {
+    max-width: 100%;
+    height: auto;
+  }
+
+  /* ASCII-art / plain text code blocks (no language) — use a softer look so
+     they don't compete with the slate-themed shiki blocks. */
+  .prose pre:not(.shiki):not(.mermaid) {
+    @apply rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/40 text-slate-700 dark:text-slate-300 p-4 text-[13px] leading-relaxed;
+    overflow-x: auto;
+    white-space: pre;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+
+  /* Horizontal rule — thinner, more subtle than prose default. */
+  .prose hr {
+    @apply my-8 border-slate-200 dark:border-slate-800;
+  }
+
+  /* Table polish — header bg, row hover, tighter cells. */
+  .prose table {
+    @apply rounded-md overflow-hidden;
+  }
+  .prose thead {
+    @apply bg-slate-50 dark:bg-slate-900/60;
+  }
+  .prose thead th {
+    @apply px-3 py-2 text-xs font-semibold uppercase tracking-wide text-slate-600 dark:text-slate-400;
+  }
+  .prose tbody td {
+    @apply px-3 py-2 align-top;
+  }
+  .prose tbody tr:hover {
+    @apply bg-slate-50 dark:bg-slate-900/40;
+  }
+
+  /* Anchors next to headings — give a hint that headings are linkable. */
+  .prose :is(h2, h3, h4) {
+    @apply relative;
+  }
+}
+
+
+

@@ -125,3 +125,62 @@ A systematic approach to scaling starts with measurement, not guessing:
 5. **Look for hot partitions** — One celebrity's profile getting 100x the traffic of others? Cache that specific key, or redesign the access pattern.
 
 **Real-world example:** Instagram scaled to millions of users on a single Django monolith by aggressively using Memcached and read replicas before ever considering microservices. Simplicity scales further than most engineers expect.
+
+---
+
+## First-time Recognition Signals
+
+When you read a brand-new system design prompt, this topic is the right framing if you see:
+
+- **"Handle 10× / 100× more users / 1 M → 100 M DAU"** — the prompt explicitly grows scale, forcing horizontal-scale discussion.
+- **"Read QPS exceeds what one DB can serve"** — replicas, caching, CQRS, fan-out cache become required vocabulary.
+- **"Write QPS exceeds what one DB can serve"** — sharding, partitioning, async writes via queue become required vocabulary.
+- **"Multi-region / global users / serve users on every continent with < 200 ms latency"** — geo-replication, edge caching, regional partitioning.
+- **"Auto-scale up and down with daily traffic patterns"** — stateless services, queue-based decoupling, and horizontal pod autoscaling.
+
+### Anti-signals (looks like this topic, isn't)
+
+- **"Internal admin dashboard for 50 employees"** — vertical scaling and a single DB are fine; don't show off horizontal complexity you don't need.
+- **"Latency-bound single-request workload"** (e.g., a complex DB query for one user) — that is query optimization or caching, not horizontal scaling.
+- **"One-time batch job over a fixed dataset"** — Spark / MapReduce sizing is the concern, not online scalability.
+
+---
+
+### Intuition
+
+Scaling is mostly about removing the constraints that force you to put everything in one place. Vertical scale (a bigger box) hits a ceiling — fast. Horizontal scale (more boxes) sounds great until you realise *state* is the enemy: any session, lock, or cached value that lives on a particular box prevents you from killing or adding boxes freely. The path to "infinite horizontal" is mostly an exercise in moving state to dedicated stores (Redis, the DB, S3) and making the compute tier itself disposable.
+
+### Worked Example: Stateful chat → stateless
+
+You have a chat service that holds the user's session in in-process memory. Today: 100 instances at 60 % CPU, fronted by an LB with **sticky sessions** (cookie-pinned). Peak 30k QPS, CPU-bound.
+
+**Before (stateful):**
+- Adding a new instance does not help — sticky cookies keep traffic on existing nodes for the cookie's lifetime.
+- Killing an instance drops every active session pinned to it → users re-auth, lose unsent messages.
+- Autoscaler reacts on a ~15-minute window (cookie expiry) to stay safe.
+- Effective elasticity: ±10 % capacity per 15 min.
+
+**Migration:** push session state into Redis (`SET session:{sid} {state} EX 1800`), remove sticky-sessions, every instance becomes identical and interchangeable.
+
+**After (stateless):**
+- New instance serves traffic the moment its health check passes (~30 s warmup).
+- Autoscaler can act on a rolling 1-min CPU average: scale out at > 70 %, scale in at < 30 %.
+- Effective elasticity: ±50 % capacity per 2 min.
+
+| Metric | Stateful | Stateless |
+|---|---|---|
+| Scale-out time | 15 min | 2 min |
+| Scale-in safety | unsafe (lose sessions) | safe (any instance disposable) |
+| Provisioned headroom for 2× spike | 200 instances | 130 instances |
+| Failure blast radius | sessions on dead host lost | zero — Redis still has them |
+| New dependency | — | Redis HA cluster (~3 nodes) |
+
+**Surprise:** going stateless typically *reduces* total compute by 30–40 % because you no longer over-provision for the slow reaction time. The cost: a Redis HA cluster and a hard rule that no request mutates local memory. **Lesson:** "stateless" is less about a frontend pattern and more about *autoscaler velocity* — and that's the metric to quote in an interview.
+
+### Further Reading
+
+- DDIA ch. 1 — reliability, scalability, maintainability; load parameters, percentiles.
+- [AWS Well-Architected Framework — Reliability Pillar](https://docs.aws.amazon.com/wellarchitected/latest/reliability-pillar/welcome.html) — autoscaling, failure isolation.
+- [GitHub Engineering — Scaling GitHub's infrastructure (series)](https://github.blog/category/engineering/infrastructure/) — practical mono-repo + MySQL scaling stories.
+- [Martin Kleppmann — Notes on distributed systems](https://martin.kleppmann.com/) — companion material to DDIA.
+

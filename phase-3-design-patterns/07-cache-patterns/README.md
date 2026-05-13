@@ -12,6 +12,25 @@ Cache stampede (thundering herd) is a particularly popular interview topic becau
 
 ## The Pattern
 
+### Where Caches Live: 3-Tier Web Architecture
+
+Before picking a cache *pattern*, it helps to see where caches actually sit in a typical web stack. Caching shows up at *every* layer between the user and the data of record.
+
+```mermaid
+flowchart LR
+    Client[Client / Browser] --> CDN[CDN<br/>edge cache]
+    CDN --> LB[Load Balancer]
+    LB --> App1[App Tier]
+    LB --> App2[App Tier]
+    App1 --> Cache[(Distributed Cache<br/>Redis / Memcached)]
+    App2 --> Cache
+    App1 --> DB[(Database)]
+    App2 --> DB
+    Cache -. miss .-> DB
+```
+
+Each layer absorbs a different class of traffic: the CDN absorbs static/edge requests, the distributed cache absorbs hot keys from the app tier, and the DB sees only what neither of the above could answer. The patterns below describe *how* the app tier interacts with that distributed cache.
+
 ### How It Works: Multi-Level Cache
 
 Production systems use multiple cache layers. A request checks each layer in order; the first hit serves the response.
@@ -113,3 +132,67 @@ When a popular cache key expires, hundreds of concurrent requests simultaneously
 ## Deep Dive: Facebook's Lease-Based Stampede Prevention
 
 Facebook's Memcache system uses a **lease** mechanism: when a client gets a cache miss, Memcache issues a lease token (a 64-bit ID). The client fetches from the DB and sets the cache value with the lease. If another client tries to set the same key with a stale lease, Memcache rejects it. Meanwhile, clients that miss during the refresh period receive a "hot miss" notification and either wait briefly and retry, or use a slightly stale value. This approach solves both stampede and the "stale set" problem where a slow client overwrites a fresh value with an old one. In interviews, referencing this specific mechanism shows you've studied real-world caching at scale.
+
+---
+
+## First-time Recognition Signals
+
+When you read a brand-new system design prompt, this pattern deserves explicit discussion if you see:
+
+- **"Pick a caching strategy: cache-aside / write-through / write-behind / write-around"** — the interviewer wants a named pattern and a justification.
+- **"Cache stampede / thundering herd when a hot key expires"** — single-flight lock, probabilistic early expiration, or stale-while-revalidate.
+- **"Hot key overwhelms a single cache node"** — replicate the key across nodes or split the key with a random suffix.
+- **"Multi-tier cache: in-process L1, Redis L2, DB origin"** — pattern is about consistency and invalidation across tiers.
+- **"Invalidation: when does cached data become stale, and who tells the cache?"** — TTL, explicit invalidation, or event-driven invalidation each have a place.
+
+### Anti-signals (looks like this pattern, isn't)
+
+- **"Write-only workload (logs, telemetry, raw events)"** — there is nothing to cache; caching layers add no value.
+- **"Each request is unique"** (per-user reports with one-off parameters) — cache hit rate near zero; cache the *building blocks* instead.
+- **"Every read must be strongly consistent"** — caching introduces a stale window by definition; either skip the cache or use write-through with single-writer guarantees.
+
+---
+
+### Intuition
+
+Choosing a caching strategy is mostly choosing what you're willing to be wrong about, and for how long. **Cache-aside** is the lazy default: the app reads from cache, falls back to the DB on miss, populates the cache, and never blocks writes. **Write-through** guarantees the cache is always fresh — at the cost of slower writes. **Write-behind** is the opposite: writes hit the cache fast and trickle to the DB later, at the cost of risking durability if the cache crashes. The matrix below is the cheat-sheet to pick the right one in 30 seconds.
+
+### Worked Example: Choosing between cache-aside, write-through, write-behind, write-around
+
+Two axes drive the choice: read:write ratio and consistency tolerance.
+
+| Workload | Read:Write | Consistency tolerance | Best pattern | Why |
+|---|---|---|---|---|
+| User profile page | 100 : 1 | seconds-stale OK | **Cache-aside** | Default; tolerates stale; simple |
+| Shopping cart (read your own write) | 10 : 1 | none — must be fresh | **Write-through** | Cache & DB updated atomically; reads always fresh |
+| Real-time analytics counter | 1 : 50 (write-heavy) | minutes-stale OK | **Write-behind** | Cache absorbs spikes; DB writes batched (10× fewer); accept loss-on-crash risk |
+| Product catalog (admins edit, users rarely read) | 1 : 100 | minutes-stale OK | **Write-around** | Skip cache on write; populate lazily on read; avoids cache churn |
+| Hot leaderboard (top-100 of millions) | 10,000 : 1 | seconds-stale OK | **Cache-aside + background refresh** | Hottest possible; preempt stampede with proactive refresh |
+
+**Numerical example — write-through vs cache-aside for a cart**
+
+User adds an item; immediately views cart on the next page.
+
+```
+Cache-aside path:
+  POST /cart/add  → DB write (5 ms) + invalidate cache key (1 ms) = 6 ms
+  GET  /cart      → cache miss (1 ms) + DB read (5 ms) + cache fill (1 ms) = 7 ms
+  Total user-perceived: 6 + 7 = 13 ms
+
+Write-through path:
+  POST /cart/add  → DB write + cache write (in parallel: max 5 ms) = 5 ms
+  GET  /cart      → cache hit (1 ms) = 1 ms
+  Total user-perceived: 5 + 1 = 6 ms
+```
+
+Write-through is **~2× faster for read-after-write** *and* never serves a stale cart. The only cost: if the cache write fails after the DB write, cache & DB diverge until the next invalidation (mitigation: idempotent dual-write + a reconciler).
+
+**Surprise:** write-behind looks tempting for "make writes fast" — but a cache crash before flush = silent data loss. Production write-behind requires a durable buffer (e.g., Kafka in front of the DB), at which point you're approaching event sourcing. **Lesson:** write-behind is for *tolerant* workloads (telemetry, analytics) only.
+
+### Further Reading
+
+- Alex Xu, *System Design Interview vol. 1*, ch. 5 — the clearest practical treatment of the four patterns.
+- Bronson et al., *TAO: Facebook's Distributed Data Store for the Social Graph* (USENIX ATC '13) — write-through + read-cache at planetary scale.
+- Nishtala et al., *Scaling Memcache at Facebook* (NSDI '13) — lease-based stampede prevention; the canonical paper.
+- [AWS Caching Best Practices](https://aws.amazon.com/caching/best-practices/) — pragmatic pattern matrix.
+

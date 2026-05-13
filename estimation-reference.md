@@ -2,7 +2,7 @@
 
 > Print this. Tape it to your wall. These numbers will justify every design decision you make.
 
-## Latency Numbers Every Engineer Should Know
+## Latency Numbers (Quick Reference)
 
 | Operation | Latency | Notes |
 |-----------|---------|-------|
@@ -147,3 +147,36 @@ CONCLUSION:
   - Need image processing pipeline (resize, compress)
   - Database stores metadata only (~1 KB per photo = 100 GB/day)
 ```
+
+---
+
+## Latency Numbers Every Engineer Should Know
+
+Source: Peter Norvig, "Teach Yourself Programming in Ten Years" (norvig.com/21-days.html) plus Jeff Dean's Stanford CS295 talk "Software Engineering Advice from Building Large-Scale Distributed Systems" (2009), refreshed for 2024 commodity hardware. Round numbers; orders of magnitude matter more than exact values.
+
+| Operation | Latency | Unit | Mental model |
+|---|---|---|---|
+| L1 cache reference | 0.5 | ns | Baseline |
+| Branch mispredict | 5 | ns | |
+| L2 cache reference | 7 | ns | 14× L1 |
+| Mutex lock/unlock | 25 | ns | |
+| Main memory reference | 100 | ns | 20× L2, 200× L1 |
+| Compress 1 KB with Zippy / Snappy | 3,000 | ns | 3 µs |
+| Send 1 KB over 1 Gbps network | 10,000 | ns | 10 µs |
+| Read 4 KB from SSD (random) | 150,000 | ns | 150 µs — 1500× memory |
+| Read 1 MB sequentially from memory | 250,000 | ns | 250 µs |
+| Round-trip in same datacenter | 500,000 | ns | 500 µs (0.5 ms) |
+| Read 1 MB sequentially from SSD | 1,000,000 | ns | 1 ms |
+| Disk seek (spinning) | 10,000,000 | ns | 10 ms |
+| Read 1 MB sequentially from disk | 30,000,000 | ns | 30 ms |
+| Round-trip CA → Netherlands → CA | 150,000,000 | ns | 150 ms |
+
+### Estimation Rules of Thumb
+
+- **Memory is 100× faster than SSD; SSD is 100× faster than disk; cross-DC is 100× slower than same-DC.**
+- **1 Gbps = 125 MB/s ≈ 12.5 MB per 100 ms** — about what you can ship in one cross-DC round-trip.
+- **Single-server QPS ceilings:** web app 1k-10k, in-memory KV 100k+, disk-backed SQL 1k-5k, message queue 10k-1M (broker-dependent).
+- **Storage rules of thumb:** text row ≈ 1 KB, photo ≈ 500 KB, HD video ≈ 10 MB/min, 4K video ≈ 50 MB/min.
+- **User growth heuristics:** 1B DAU app ≈ 10k QPS baseline / 100k peak; 10M DAU ≈ 100 QPS baseline / 1k peak; 100k DAU ≈ 1-2 QPS — don't over-engineer.
+- **Network compression payoff:** compressing 1 KB takes 3 µs, sending it takes 10 µs — almost always compress.
+- **The "rule of five 9s":** 99.999% availability = 5.26 minutes of downtime per year. 99.99% = 52 min. 99.9% = 8.76 hours. Quoting an availability target without knowing this is an interview red flag.

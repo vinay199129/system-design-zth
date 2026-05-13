@@ -223,3 +223,35 @@ During an active ride, the rider sees the driver's live position:
 - **Autonomous vehicles:** Integration with self-driving fleet dispatch.
 - **Predictive positioning:** Pre-position drivers in high-demand areas before demand materializes (using historical patterns + events data).
 - **Multi-modal transport:** Combine ride-sharing with public transit, bikes, and scooters for optimal routes.
+
+---
+
+## First-time Recognition Signals
+
+When the interviewer's prompt sounds like this, the Uber playbook (geospatial indexing + driver-rider matching + surge pricing + real-time tracking) is the right answer:
+
+- **"Match riders to the nearest available driver within 2 km"** — direct geospatial indexing (S2 cells / H3 hexagons / quadtree).
+- **"Show the driver moving on a map in real time"** — WebSocket location stream + driver-state Redis hash.
+- **"Surge pricing in high-demand zones"** — supply/demand telemetry per cell with a pricing service.
+- **"ETA prediction accounting for traffic"** — road-graph routing + traffic data layer.
+- **"Process payment automatically when the ride ends"** — handoff to a payment system + ledger.
+
+### Anti-signals (looks like this design, isn't)
+
+- **"Food delivery with restaurant menu and order tracking"** — DoorDash-style; same geospatial primitives but inventory + multi-leg routing dominate.
+- **"Pre-book a ride for tomorrow at 9 a.m."** — that's a scheduling service, not real-time matching; matching happens minutes before pickup.
+- **"Station-based bike/scooter rental"** — fixed inventory at known coordinates; no driver-rider matching at all.
+
+## Further Reading
+
+- Uber Engineering — "H3: Uber's Hexagonal Hierarchical Spatial Index".
+- Uber blog — "Schemaless: Uber Engineering's Datastore Using MySQL".
+- *System Design Interview Vol. 2* (Alex Xu), Uber chapter.
+- Google S2 Geometry library documentation.
+
+## Variant Prompts
+
+- **"What if there are 100× more rides/sec at peak?"** — partition matching per city, autoscale per region, pre-warm dispatcher pools before known peaks.
+- **"What if driver locations must be < 50 ms fresh globally?"** — edge POPs receive location updates; regional matchers read locally; cross-region replication is async.
+- **"What if we cannot lose a location update or a ride record?"** — Kafka log for locations (best-effort retention), durable trip store, dual-write on ride completion.
+- **"What if the team only has 2 engineers?"** — Mapbox for routing + Twilio for SMS + Stripe for payments; build only the matching service over PostGIS.

@@ -199,3 +199,37 @@ Use **302** if analytics matter. Use **301** if minimizing server load is the pr
 - **Geographic analytics:** Track redirects by region using GeoIP.
 - **Private links:** Password-protected short URLs.
 - **A/B testing:** Redirect to different destinations based on percentage splits.
+
+---
+
+## First-time Recognition Signals
+
+When the interviewer's prompt sounds like this, the URL-shortener playbook (Base62 + KGS + Redis-fronted KV) is the right answer:
+
+- **"Map long URLs to short codes — give me back something tweetable"** — direct match for the shorten/redirect pair.
+- **"Custom alias support / branded short links"** — alias namespace collision check is the giveaway.
+- **"Track clicks per link / count redirects globally"** — short-key → counter, ideally via an async event stream.
+- **"100M new URLs/month, 1B redirects/month, 100:1 read-heavy"** — the canonical estimation prompt that points at KGS + cache.
+- **"Short codes should not be predictable / not be a sequential counter"** — KGS with random Base62 (not raw counter) fits.
+
+### Anti-signals (looks like this design, isn't)
+
+- **"Generate unguessable single-use security tokens"** — that's a CSPRNG / UUIDv4 producer; there is no long→short mapping to store, so the design is library-only.
+- **"Encode the entire payload inside the URL itself"** — that's stateless URL encoding (JWT-in-URL or base64-encoded params), no server-side mapping table at all.
+- **"Mask the destination of an affiliate / ad link"** — that's an ad-network redirector with fraud, attribution, and policy concerns that a shortener doesn't address.
+
+## Further Reading
+
+- Bit.ly Engineering blog — "DRBs at Bit.ly" / their data-store and KGS choices.
+- *System Design Interview Vol. 1* (Alex Xu), Chapter 8 — Design a URL Shortener.
+- *Designing Data-Intensive Applications* (Kleppmann), Chapter 6 — Partitioning of Key-Value Data.
+- Discord Engineering — "How Discord stores billions of messages" — applicable patterns for short-key sharded data.
+
+## Variant Prompts
+
+If the interviewer mutates the problem mid-round, pivot like this:
+
+- **"What if writes are 100× this (4k QPS shorten)?"** — partition KGS by node range, write to a regional primary, push analytics through Kafka so the redirect DB sees no extra write load.
+- **"What if reads must be globally < 50 ms?"** — anycast LB + Cloudflare/CloudFront edge cache of the 301/302 response; regional read replicas of the short-key DB.
+- **"What if we cannot lose any short link, ever?"** — synchronous quorum write to the URL store, dual-region replication of the `used_keys` table, daily S3 snapshot of the mapping.
+- **"What if the team only has 2 engineers?"** — skip KGS; use Postgres `bigserial` → Base62, managed Redis, and Cloudflare for cache/CDN. Defer analytics to a managed product like Plausible.

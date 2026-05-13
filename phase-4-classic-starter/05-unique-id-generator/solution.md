@@ -183,3 +183,35 @@ This reduces to 32 machines per datacenter but supports 32 datacenters.
 - **ID prediction protection:** Add randomized lower bits to prevent ID enumeration attacks.
 - **Time-based partitioning:** Use the timestamp prefix for efficient time-range queries in the database.
 - **Graceful degradation:** If ZK is down, fall back to random machine IDs with collision detection.
+
+---
+
+## First-time Recognition Signals
+
+When the interviewer's prompt sounds like this, the Snowflake playbook (timestamp + machine-id + sequence in a 64-bit int) is the right answer:
+
+- **"Generate globally unique IDs at high throughput without a central DB"** — direct Snowflake match.
+- **"IDs must be sortable by creation time"** — time-prefixed (Snowflake, ULID, UUIDv7), not UUIDv4.
+- **"Compact 64-bit ID suitable for a B-tree primary key"** — bit-packed Snowflake.
+- **"Generated client-side / in-process with no network call"** — library Snowflake with a machine-id lease, not a service.
+- **"Twitter-style tweet/like/post IDs"** — Twitter literally invented this for that.
+
+### Anti-signals (looks like this design, isn't)
+
+- **"Strong cryptographic randomness for unguessable tokens"** — that's a CSPRNG / UUIDv4; Snowflake's timestamp prefix leaks creation time.
+- **"Short, human-readable code (max 8 characters)"** — that's a Base62 counter / KGS (the URL-shortener pattern), not a 64-bit number.
+- **"Distributed counter that returns the current count"** — that's a counting service (etcd lease counter, Redis INCR), not an opaque ID.
+
+## Further Reading
+
+- Twitter blog — "Announcing Snowflake" (2010, the original).
+- Discord Engineering — "Why we use Snowflake IDs" (great practical write-up).
+- Instagram blog — "Sharding & IDs at Instagram" (Postgres-function variant of the same idea).
+- *Designing Data-Intensive Applications* (Kleppmann), Chapter 8 — Lamport timestamps and logical clocks.
+
+## Variant Prompts
+
+- **"What if you need 100× the IDs/sec?"** — drop sequence bits, widen to UUIDv7 with random tail; or run multiple Snowflake instances per host with different machine-ids.
+- **"What if global p99 must be < 50 ms?"** — library-in-process gives sub-microsecond generation; no further work needed.
+- **"What if duplicates are unacceptable, ever?"** — ZooKeeper-leased machine-ids + monotonic-clock guard + refuse-on-backward-skew.
+- **"What if the team only has 2 engineers?"** — Postgres `bigserial` sharded per region; or UUIDv7 from a stdlib — no service to run.

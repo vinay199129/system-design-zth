@@ -220,3 +220,35 @@ The recommendation system generates the home page feed:
 - **AV1 codec migration:** 30% bitrate savings over VP9, reducing CDN costs significantly.
 - **Edge computing:** Run lightweight recommendation models at CDN edge for personalized thumbnail selection.
 - **Shorts/vertical video:** Separate pipeline optimized for short-form content with different caching and recommendation strategies.
+
+---
+
+## First-time Recognition Signals
+
+When the interviewer's prompt sounds like this, the YouTube playbook (chunked resumable upload + transcode farm + ABR variants + global CDN + recsys) is the right answer:
+
+- **"Upload 4K video and stream it globally with adaptive bitrate"** — HLS/DASH variants + CDN is the spine of the design.
+- **"Recommend the next video to watch"** — two-stage recsys (candidate generation + ranking).
+- **"Resumable upload of a 5 GB file"** — chunked TUS/multipart upload.
+- **"Live-stream a concert to millions of viewers"** — live ingest + HLS edge fan-out variant.
+- **"Search videos by title and spoken content"** — Elasticsearch + ASR caption index.
+
+### Anti-signals (looks like this design, isn't)
+
+- **"Short-form vertical reels with a recsys-first feed (TikTok)"** — algorithmic feed dominates; channels/subscriptions are deprioritized.
+- **"Real-time video conferencing for a team meeting"** — WebRTC + SFU/MCU (Zoom design), not VOD.
+- **"Self-host a video player for an internal training portal"** — single-region S3 + a JS player; you don't need the full YouTube system.
+
+## Further Reading
+
+- Netflix blog — "Per-Title Encoding Optimization" (industry-defining post on transcoding economics).
+- YouTube Engineering posts — "How YouTube serves video at scale" / Vitess architecture.
+- *System Design Interview Vol. 2* (Alex Xu), YouTube chapter.
+- HLS RFC 8216 and MPEG-DASH ISO/IEC 23009 standards.
+
+## Variant Prompts
+
+- **"What if uploads are 100× this?"** — more transcoder shards (GPU-backed), queue-based scheduling, separate priority lanes (creator vs casual).
+- **"What if global p99 start-time must be < 50 ms?"** — heavy edge caching of the manifest and first segments; prefetch the next ABR rung.
+- **"What if no video can ever be lost?"** — S3 multi-region; keep the original mezzanine forever; periodic checksums.
+- **"What if the team only has 2 engineers?"** — Mux.com or Cloudflare Stream for ingest + transcode + delivery; you build only the metadata + recsys layer.

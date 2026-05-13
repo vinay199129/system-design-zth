@@ -1,0 +1,69 @@
+﻿
+> system-design-zth-web@0.1.0 prebuild
+> node scripts/extract-content.mjs
+
+
+-- Content extraction summary -----------------------------------
+Study sections: 55
+Designs:        20
+Schedule days:  60
+  p0  Framework                    0 designs
+  p1  Building Blocks              0 designs
+  p2  Distributed Concepts         0 designs
+  p3  Design Patterns              0 designs
+  p4  Starter Designs              10 designs
+  p5  Advanced Designs             10 designs
+  p6  Mock Interviews              0 designs
+Output: web\src\generated/
+-----------------------------------------------------------------
+
+> system-design-zth-web@0.1.0 build
+> next build
+
+   Ôû▓ Next.js 15.5.18
+
+   Creating an optimized production build ...
+ Ô£ô Compiled successfully in 34.0s
+   Linting and checking validity of types ...
+   Collecting page data ...
+   Generating static pages (0/88) ...
+   Generating static pages (22/88) 
+   Generating static pages (44/88) 
+   Generating static pages (66/88) 
+ Ô£ô Generating static pages (88/88)
+   Finalizing page optimization ...
+   Collecting build traces ...
+   Exporting (0/2) ...
+ Ô£ô Exporting (2/2)
+
+Route (app)                                 Size  First Load JS
+Ôöî Ôùï /                                    7.54 kB         321 kB
+Ôö£ Ôùï /_not-found                             1 kB         104 kB
+Ôö£ Ôùï /designs                             4.05 kB         111 kB
+Ôö£ ÔùÅ /designs/[slug]                      4.49 kB         111 kB
+Ôö£   Ôö£ /designs/p4-url-shortener
+Ôö£   Ôö£ /designs/p4-pastebin
+Ôö£   Ôö£ /designs/p4-rate-limiter
+Ôö£   Ôöö [+17 more paths]
+Ôö£ Ôùï /patterns                              170 B         107 kB
+Ôö£ Ôùï /profile                             5.94 kB         109 kB
+Ôö£ Ôùï /progress                            2.42 kB         312 kB
+Ôö£ Ôùï /redo                                2.48 kB         316 kB
+Ôö£ Ôùï /review                              2.87 kB         106 kB
+Ôö£ Ôùï /robots.txt                            132 B         103 kB
+Ôö£ Ôùï /sitemap.xml                           132 B         103 kB
+Ôö£ Ôùï /study                                 170 B         107 kB
+Ôöö ÔùÅ /study/[slug]                         4.4 kB         111 kB
+    Ôö£ /study/guide-how-to-think
+    Ôö£ /study/guide-daily-schedule
+    Ôö£ /study/guide-estimation-ref
+    Ôöö [+52 more paths]
++ First Load JS shared by all             103 kB
+  Ôö£ chunks/1255-d6f8fd5fe64557db.js      46.1 kB
+  Ôö£ chunks/4bd1b696-100b9d70ed4e49c1.js  54.2 kB
+  Ôöö other shared chunks (total)          2.98 kB
+
+
+Ôùï  (Static)  prerendered as static content
+ÔùÅ  (SSG)     prerendered as static HTML (uses generateStaticParams)
+

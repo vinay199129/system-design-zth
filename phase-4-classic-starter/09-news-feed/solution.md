@@ -232,3 +232,35 @@ Ranking happens at read time on the merged candidate set (~500 posts → top 20)
 - **Feed diversity controls:** Let users tune their feed (more from friends, less suggested).
 - **Real-time updates:** Push new posts to the feed via WebSocket while the user is scrolling.
 - **Content moderation:** Filter flagged, spam, or harmful content before it reaches the feed.
+
+---
+
+## First-time Recognition Signals
+
+When the interviewer's prompt sounds like this, the news-feed playbook (hybrid push/pull fan-out + Redis sorted-set feed cache + precomputed ranking) is the right answer:
+
+- **"Show posts from people I follow, ranked or newest-first"** — direct match for fan-out + feed cache.
+- **"Some users have 100M followers — handle the celebrity case"** — pure push won't work; switch to hybrid (pull on read for celebs).
+- **"Personalized ranking, not strictly chronological"** — ranker tier between candidate generation and serving.
+- **"Infinite scroll with low first-paint latency"** — pre-built per-user feed cache + cursor pagination.
+- **"Posts may include text, photo, or video — surface them in one stream"** — content URLs are stored in the cache; payloads stay in blob storage / CDN.
+
+### Anti-signals (looks like this design, isn't)
+
+- **"Chronological list of *my own* posts on my profile"** — that's a simple `WHERE user_id = ? ORDER BY time` query; no fan-out needed.
+- **"Real-time chat conversation feed"** — that's the chat-system with WS push, not a follow-graph fan-out.
+- **"Personalized product recommendations on the homepage"** — that's a recsys (collaborative filtering / two-tower), not a follow-graph feed.
+
+## Further Reading
+
+- Twitter blog — "Timelines at Scale" (Yao Yue, QCon talk + post).
+- Facebook Engineering — "TAO: Facebook's Distributed Data Store for the Social Graph".
+- *System Design Interview Vol. 1* (Alex Xu), Chapter 11 — Designing a News Feed System.
+- *Designing Data-Intensive Applications* (Kleppmann), Chapter 1 — uses the Twitter timeline as the running fan-out example.
+
+## Variant Prompts
+
+- **"What if there are 100× more posts/day?"** — shard the post store by `post_id`, partition fan-out workers by `user_id` range, increase the celebrity threshold.
+- **"What if global p99 feed reads must be < 50 ms?"** — edge-cache top-N items per user via CDN; precompute the visible window and only re-rank lazily.
+- **"What if no post can ever be missed from a feed?"** — durable post log (Kafka), replay-able fan-out worker, periodic reconciliation between source-of-truth and feed cache.
+- **"What if the team only has 2 engineers?"** — pure pull from a posts table + a thin Redis read-through cache; skip the fan-out service entirely.

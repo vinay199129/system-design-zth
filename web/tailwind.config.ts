@@ -1,0 +1,121 @@
+import type { Config } from 'tailwindcss';
+import typography from '@tailwindcss/typography';
+
+const config: Config = {
+  darkMode: 'class',
+  content: ['./src/**/*.{ts,tsx,mdx}'],
+  theme: {
+    extend: {
+      colors: {
+        brand: {
+          50: '#eef2ff',
+          100: '#e0e7ff',
+          200: '#c7d2fe',
+          300: '#a5b4fc',
+          400: '#818cf8',
+          500: '#6366f1',
+          600: '#4f46e5',
+          700: '#4338ca',
+          800: '#3730a3',
+          900: '#312e81',
+          950: '#1e1b4b',
+        },
+      },
+      fontFamily: {
+        sans: [
+          '-apple-system',
+          'BlinkMacSystemFont',
+          'Segoe UI',
+          'system-ui',
+          'sans-serif',
+        ],
+      },
+      typography: ({ theme }: { theme: (path: string) => string }) => ({
+        DEFAULT: {
+          css: {
+            '--tw-prose-body': theme('colors.slate.700'),
+            '--tw-prose-headings': theme('colors.slate.900'),
+            '--tw-prose-lead': theme('colors.slate.700'),
+            '--tw-prose-links': theme('colors.brand.700'),
+            '--tw-prose-bold': theme('colors.slate.900'),
+            '--tw-prose-counters': theme('colors.slate.500'),
+            '--tw-prose-bullets': theme('colors.brand.400'),
+            '--tw-prose-hr': theme('colors.slate.200'),
+            '--tw-prose-quotes': theme('colors.slate.700'),
+            '--tw-prose-quote-borders': theme('colors.brand.400'),
+            '--tw-prose-captions': theme('colors.slate.500'),
+            '--tw-prose-code': theme('colors.slate.900'),
+            '--tw-prose-pre-code': theme('colors.slate.100'),
+            '--tw-prose-pre-bg': theme('colors.slate.50'),
+            '--tw-prose-th-borders': theme('colors.slate.300'),
+            '--tw-prose-td-borders': theme('colors.slate.200'),
+            h1: { fontWeight: '700', letterSpacing: '-0.02em', scrollMarginTop: '5rem' },
+            h2: { fontWeight: '600', letterSpacing: '-0.01em', scrollMarginTop: '5rem' },
+            h3: { fontWeight: '600', scrollMarginTop: '5rem' },
+            h4: { fontWeight: '600', scrollMarginTop: '5rem' },
+            a: { textDecoration: 'none', fontWeight: '500' },
+            'a:hover': { textDecoration: 'underline', textUnderlineOffset: '2px' },
+            'ul > li::marker': { color: theme('colors.brand.400') },
+            'ol > li::marker': { color: theme('colors.slate.500') },
+            table: {
+              fontSize: '0.875em',
+              borderCollapse: 'separate',
+              borderSpacing: 0,
+            },
+            'thead th': {
+              borderBottom: `1px solid ${theme('colors.slate.300')}`,
+              fontWeight: '600',
+            },
+            'tbody td': {
+              borderBottom: `1px solid ${theme('colors.slate.200')}`,
+            },
+            blockquote: {
+              borderLeftColor: theme('colors.brand.400'),
+              backgroundColor: theme('colors.brand.50'),
+              borderRadius: '0.375rem',
+              paddingTop: '0.5rem',
+              paddingBottom: '0.5rem',
+              paddingRight: '1rem',
+              fontStyle: 'normal',
+              fontWeight: '400',
+              color: theme('colors.slate.800'),
+            },
+            'blockquote p': { marginTop: 0, marginBottom: 0 },
+            'blockquote p:first-of-type::before': { content: 'none' },
+            'blockquote p:last-of-type::after': { content: 'none' },
+            'code::before': { content: '""' },
+            'code::after': { content: '""' },
+          },
+        },
+        invert: {
+          css: {
+            '--tw-prose-body': theme('colors.slate.300'),
+            '--tw-prose-headings': theme('colors.slate.100'),
+            '--tw-prose-lead': theme('colors.slate.300'),
+            '--tw-prose-links': theme('colors.brand.300'),
+            '--tw-prose-bold': theme('colors.slate.100'),
+            '--tw-prose-counters': theme('colors.slate.400'),
+            '--tw-prose-bullets': theme('colors.brand.500'),
+            '--tw-prose-hr': theme('colors.slate.800'),
+            '--tw-prose-quotes': theme('colors.slate.200'),
+            '--tw-prose-quote-borders': theme('colors.brand.500'),
+            '--tw-prose-th-borders': theme('colors.slate.700'),
+            '--tw-prose-td-borders': theme('colors.slate.800'),
+            'ul > li::marker': { color: theme('colors.brand.500') },
+            'ol > li::marker': { color: theme('colors.slate.400') },
+            blockquote: {
+              borderLeftColor: theme('colors.brand.500'),
+              backgroundColor: 'rgba(79, 70, 229, 0.08)',
+              color: theme('colors.slate.200'),
+            },
+            'thead th': { borderBottomColor: theme('colors.slate.700') },
+            'tbody td': { borderBottomColor: theme('colors.slate.800') },
+          },
+        },
+      }),
+    },
+  },
+  plugins: [typography],
+};
+
+export default config;

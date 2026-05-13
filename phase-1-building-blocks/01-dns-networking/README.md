@@ -127,3 +127,49 @@ This question is the **single most common networking interview question**. A str
 9. **Browser rendering** — Parse HTML → build DOM → fetch CSS/JS → layout → paint → composite.
 
 Interviewers use this question to probe depth. The more layers you can explain with precision (e.g., mentioning TLS 1.3 vs 1.2, HTTP/2 server push, TCP slow start), the stronger your signal.
+
+---
+
+## First-time Recognition Signals
+
+When you read a brand-new system design prompt, this building block is the right tool if you see:
+
+- **"Geographically distributed users / route each user to the nearest data center"** — GeoDNS / latency-based routing answers DNS queries differently per requester region.
+- **"Fail over between regions with no client code changes"** — DNS-level failover with health checks + low TTL is the cheapest cross-region failover knob.
+- **"Custom domain support for tenants / vanity URLs"** — CNAME/A record provisioning per tenant is a DNS-first design problem.
+- **"Migrate traffic gradually from old infra to new"** — weighted DNS records let you shift 1% → 10% → 100% without code changes.
+- **"Mitigate DDoS at the edge / global anycast"** — anycast DNS (Route 53, Cloudflare) absorbs floods far from your origin.
+
+### Anti-signals (looks like this building block, isn't)
+
+- **"Sub-second failover when a server dies"** — DNS TTL caching (often 30s-5min, longer at resolvers) makes DNS too slow; use a Layer-4/7 load balancer with health checks.
+- **"Route each request based on URL path or HTTP header"** — that is an L7 load balancer / API gateway decision, not DNS (DNS only sees the hostname).
+- **"Authenticate the caller / rate-limit per user"** — DNS does not see HTTP; reach for an API gateway or proxy.
+
+---
+
+### Intuition
+
+Think of DNS as calling 411 to look up a phone number — except the operator first asks the country directory, then the area-code directory, then the local listings. Every level memorises the answer for a while (the TTL) so you don't have to walk the whole tree on every call. Shorten the memory and you get faster cutover when numbers change, but more 411 calls; lengthen it and you save calls but serve stale answers. Picking the right TTL is the single biggest knob you'll touch in any DNS-driven design — and it's also the one most candidates get hand-wavy about in interviews.
+
+### Worked Example: Sizing TTL for a multi-region API
+
+You run an API in `us-east-1` and `eu-west-1`, fronted by a DNS record that should steer clients to the nearest healthy region. The question: what TTL?
+
+| TTL | Worst-case failover (resolvers respect TTL) | DNS queries per client per day | Notes |
+|---|---|---|---|
+| 60 s | ~1–2 min (incl. resolver lag) | 1,440 | Aggressive; good for active-active failover. Many resolvers floor at 30–60 s anyway. |
+| 300 s | ~5–10 min | 288 | Common default; balances failover speed and query volume. |
+| 3600 s | up to hours | 24 | Cheap & stable; only safe when an L4 LB / anycast does the *real* failover. |
+
+For 10 M daily clients at TTL = 60 s: `10M × 1,440 = 14.4B queries/day` to your authoritative tier. At TTL = 300 s the same fleet generates 2.88 B — **a 5× saving for 5× slower failover**.
+
+**Surprise:** many recursive resolvers (large ISPs, public DNS) silently clamp TTLs to a minimum of 30–60 s *or* cache them for hours regardless of what you set — so haggling between 30 s and 60 s is mostly theatre. **Lesson:** treat DNS as your *coarse* failover (minutes) and rely on a Layer-4/7 LB + health checks for *fast* (seconds) failover. Quote both numbers in the interview.
+
+### Further Reading
+
+- [Cloudflare Learning Center — What is DNS?](https://www.cloudflare.com/learning/dns/what-is-dns/) — the clearest free intro to the resolver hierarchy.
+- [AWS Route 53 routing policies](https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/routing-policy.html) — canonical reference for weighted, latency, geolocation, and failover routing.
+- [Julia Evans — How DNS works (zine)](https://wizardzines.com/zines/dns/) — visual deep-dive; great for cementing the hierarchy.
+- DDIA ch. 8 sidebar — *Designing Data-Intensive Applications* discusses DNS as a globally distributed, eventually-consistent system.
+

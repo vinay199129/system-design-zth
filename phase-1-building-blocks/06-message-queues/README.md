@@ -53,6 +53,44 @@ flowchart LR
     C2 -.->|failure after retries| DLQ
 ```
 
+#### Topic → Partitions → Multiple Consumer Groups
+
+The same Kafka topic can feed *independent* consumer groups, each tracking its own offset. Below, the `orders` topic has 4 partitions and is consumed by both a Billing group (2 workers) and an Analytics group (2 workers). Each group sees every message once; neither blocks the other.
+
+```mermaid
+flowchart LR
+    P[Producer] --> T
+
+    subgraph T[Topic: orders]
+        P0[Partition 0]
+        P1[Partition 1]
+        P2[Partition 2]
+        P3[Partition 3]
+    end
+
+    subgraph CG1[Consumer Group A: Billing]
+        CA1[Worker A1]
+        CA2[Worker A2]
+    end
+
+    subgraph CG2[Consumer Group B: Analytics]
+        CB1[Worker B1]
+        CB2[Worker B2]
+    end
+
+    P0 --> CA1
+    P1 --> CA1
+    P2 --> CA2
+    P3 --> CA2
+
+    P0 --> CB1
+    P1 --> CB2
+    P2 --> CB1
+    P3 --> CB2
+```
+
+Adding the Analytics group later required no producer change — that decoupling is the entire point of pub/sub-style log brokers.
+
 ### Point-to-Point vs Pub/Sub
 
 | Pattern | How It Works | Use Case |
@@ -168,3 +206,69 @@ If **Payment fails**, it publishes `payment.failed` → Inventory compensates by
 | **Orchestration** | Clear flow visibility, easier debugging | Single point of failure, tighter coupling |
 
 **What to say in an interview:** "For an order processing workflow spanning multiple services, I would use the Saga pattern. I would start with choreography — each service publishes domain events and reacts to others. For complex flows with many steps, I would introduce an orchestrator for better observability. Each step has a compensating action that runs on failure to maintain eventual consistency."
+
+---
+
+## First-time Recognition Signals
+
+When you read a brand-new system design prompt, this building block is the right tool if you see:
+
+- **"Decouple the producer from a slow / unreliable consumer"** (web request enqueues a job; worker processes asynchronously) — the canonical queue use case.
+- **"Background work after a user action"** (send email, transcode video, resize image, run ML inference) — return 202 immediately, do the work later.
+- **"Absorb traffic spikes / smooth bursts"** — the queue is a shock absorber between a bursty front end and a steady-rate backend.
+- **"Retry with backoff and dead-letter on permanent failure"** — message queues give this for free.
+- **"Many workers process at their own pace"** (consumer group, competing consumers) — natural fit.
+
+### Anti-signals (looks like this building block, isn't)
+
+- **"Need a synchronous response with low latency"** — RPC/HTTP, not a queue (queues add at least one round-trip and unbounded latency).
+- **"Many consumers each receive every message / replay history"** — that is pub/sub or an event log (Kafka), not a classic work queue where each message is consumed once.
+- **"Strict global ordering across millions of partitions"** — most queues only order per-partition / per-FIFO group; a single global ordering is a serious throughput cap.
+
+---
+
+### Intuition
+
+A message queue is a buffer between two parts of your system that disagree about pace. The producer wants to fire and forget; the consumer wants to take its time. Without the queue, the producer either waits (slow) or drops work (lossy). With it, both sides keep their own rhythm — and the queue absorbs the difference in a durable, replayable log. Kafka's specific superpower is that it remembers history, so multiple consumer groups can independently read the same events at their own speeds.
+
+### Worked Example: Sizing Kafka partitions for 50k msg/s
+
+Throughput goal: 50,000 msg/s. Payload: 1 KB average. Replication factor (RF) = 3. Retention: 7 days.
+
+**Step 1 — partition count.** A single Kafka partition reliably handles 5–10 MB/s of write throughput; pick 5 MB/s for safety = 5,000 msg/s/partition at 1 KB messages.
+
+```
+Minimum partitions   = 50,000 / 5,000 = 10
++ Headroom for 2× burst & future growth ≈ 24 partitions
+```
+
+You can't have more *useful* consumers than partitions — if you'll ever want 24 parallel workers, size for at least 24.
+
+**Step 2 — storage.**
+
+```
+Daily ingest = 50,000 msg/s × 1 KB × 86,400 s = 4.32 TB/day
+× retention 7 d                               = 30.2 TB
+× RF 3                                        = 90.7 TB
++ index/log overhead ~10%                    ≈ 100 TB cluster disk
+```
+
+**Step 3 — brokers.** With ~4 TB usable per broker (8 TB raw, 50 % headroom for compaction & growth), `100 / 4 ≈ 25 brokers`. Round up to **30** for safe replica placement and to survive single-broker loss.
+
+| Component | Sizing |
+|---|---|
+| Partitions (per topic) | 24 |
+| Brokers | 30 |
+| Disk (cluster total) | ~100 TB |
+| Producer throughput | 50 MB/s |
+| Replication traffic (intra-cluster) | ~150 MB/s ≈ 1.2 Gbps just for replicas |
+
+**Surprise:** the RF=3 triples both disk *and* network. Teams routinely undersize NICs and discover that a 10 GbE link saturates from replication alone at 50k+ msg/s. **Lesson:** in Kafka, network — not CPU or disk — is usually the first wall. Plan 25 Gbps NICs or partitioned racks for sustained 50k+ msg/s.
+
+### Further Reading
+
+- Narkhede, Shapira & Palino, *Kafka: The Definitive Guide*, ch. 1–3 — partitions, replication, consumer groups.
+- [Confluent — Exactly-Once Semantics in Apache Kafka](https://www.confluent.io/blog/exactly-once-semantics-are-possible-heres-how-apache-kafka-does-it/) — idempotent producers + transactions.
+- [Uber Engineering — Reliable Reprocessing & Dead-Letter Queues in Kafka](https://www.uber.com/blog/reliable-reprocessing/) — production patterns for poison-message handling.
+- [Confluent — How to choose the number of topics/partitions](https://www.confluent.io/blog/how-choose-number-topics-partitions-kafka-cluster/) — sizing rules of thumb.
+

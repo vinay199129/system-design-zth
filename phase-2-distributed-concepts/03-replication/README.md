@@ -137,3 +137,64 @@ Leader failure triggers the most dangerous sequence in a replicated system:
 4. **Old leader returns:** When the old leader comes back online, it must become a follower and discard any writes not replicated to the new leader. GitHub had a famous incident (2012) where a stale primary was promoted, causing data loss.
 
 **Interview tip:** Mention split-brain proactively. Saying "we need to prevent split-brain during failover, perhaps using a consensus algorithm like Raft" shows you understand the real-world complexity beyond textbook replication.
+
+---
+
+## First-time Recognition Signals
+
+When you read a brand-new system design prompt, this topic is the right tool if you see:
+
+- **"High availability / no single point of failure / 99.99% uptime"** — at minimum, primary + standby; usually primary + multiple async replicas.
+- **"Read-heavy workload with stale-read tolerance"** — read replicas peel read traffic off the primary.
+- **"Disaster recovery with RPO ≤ 5 minutes, RTO ≤ 15 minutes"** — synchronous or near-synchronous cross-region replication is needed.
+- **"Geo-distributed reads with low latency"** — regional read replicas serve reads close to the user; writes still go to the leader.
+- **"Failover to standby on primary outage"** — replication is the substrate; the conversation is about leader election and how stale the standby is.
+
+### Anti-signals (looks like this topic, isn't)
+
+- **"Scale write throughput"** — replication amplifies writes (every write goes to every replica). Sharding is the answer.
+- **"Need read-your-writes from any replica with no session pinning"** — async replicas can lag; without sync replication or sticky sessions, this fails.
+- **"Tiny dataset, single-region, internal tool"** — replication is operational overhead; daily backups may be enough.
+
+---
+
+### Intuition
+
+Replication is your "what if the box catches fire?" insurance. You keep N copies of the data; if the primary dies, a replica takes over. The catch: *synchronous* replication makes every write wait for replicas (slow but safe), while *asynchronous* replication lets the primary die with un-replicated writes in flight (fast but lossy). The vocabulary you need for an interview is **RPO** (how much data can you afford to lose?) and **RTO** (how long can you be down?). Every replication choice is a point on that 2-D plane.
+
+### Worked Example: RPO/RTO under async replication
+
+Primary in `us-east-1a`, async replica in `us-east-1b`. Average lag = 500 ms (p99 = 1.2 s). Primary takes 1,000 writes/sec.
+
+**Scenario:** primary's disk controller dies at T + 200 ms after the last replica ack.
+
+```
+Last ack'd write at replica:   T - 500 ms
+Writes between T-500ms and T:  1,000/s × 0.5 s = 500 writes
+Writes between T and T+200ms:  1,000/s × 0.2 s = 200 writes
+Lost on failover:              500 + 200 = 700 writes (≈ 0.7 s of writes)
+```
+
+**RPO (data lost):** ~700 writes. For an order system at 1k writes/sec that's 700 unhappy customers. For a chat system, 700 missing messages.
+
+**RTO (downtime):** detection (~10 s) + replica promotion (~5 s) + DNS/connection failover (30–60 s) = **45–75 s**.
+
+**Mitigations and their cost:**
+
+| Strategy | RPO | RTO | Write-latency cost |
+|---|---|---|---|
+| Async only (baseline) | ~0.5–2 s of writes | 45–75 s | 0 (baseline) |
+| **Semi-sync** (ack on first replica) | ~0 (one replica has it) | 45–75 s | +1 RTT ≈ 2–5 ms |
+| Sync to N replicas (quorum) | 0 | 45–75 s | +1 RTT × slowest replica ≈ 10–30 ms |
+| `fsync=on` + sync replication | 0 (even on power loss) | 45–75 s | +1 RTT + disk fsync ≈ 20–50 ms |
+| Multi-leader / Spanner | 0 | < 5 s | +5–15 ms (TrueTime / Paxos) |
+
+**Surprise:** semi-sync (Postgres `synchronous_commit = remote_apply`, MySQL `rpl_semi_sync`) costs only a handful of ms but reduces RPO from seconds to ~zero. Most teams stay on plain async because they never measured the loss until an incident. **Lesson:** quote RPO and RTO numbers in the interview — "I'd use semi-sync because we can tolerate +5 ms latency for ~zero RPO" is the senior-engineer signal.
+
+### Further Reading
+
+- DDIA ch. 5 — *the* canonical replication chapter (single-leader, multi-leader, leaderless).
+- [Jepsen — MongoDB / PostgreSQL analyses](https://jepsen.io/analyses) — real failure modes under partition.
+- [Amazon Aurora Multi-Master design](https://aws.amazon.com/blogs/database/amazon-aurora-multi-master-now-generally-available/) — shared-storage replication.
+- [Stripe Engineering — Online migrations & failover](https://stripe.com/blog/online-migrations) — production patterns for cutover.
+

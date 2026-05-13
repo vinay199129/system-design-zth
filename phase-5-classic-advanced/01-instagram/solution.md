@@ -198,3 +198,35 @@ The Explore index is pre-computed hourly and stored in a dedicated serving layer
 - **Stories:** Ephemeral content with a 24-hour TTL stored in a separate Redis cluster with automatic expiry.
 - **Reels recommendation:** Extend Explore with a short-video recommendation engine using watch-time signals.
 - **Cross-region replication:** Active-active deployment for feed serving across 3+ regions.
+
+---
+
+## First-time Recognition Signals
+
+When the interviewer's prompt sounds like this, the Instagram playbook (photo upload + transcode + CDN + sharded feed cache + explore recsys) is the right answer:
+
+- **"Users post photos and followers see them in a feed"** — direct match for photo-sharing with a social graph.
+- **"Generate multiple resolutions / thumbnails on upload"** — async transcode pipeline + CDN.
+- **"Personalized Explore tab"** — recsys overlay separate from the follow-graph feed.
+- **"Tag people and places in photos"** — entity index on top of the photo metadata.
+- **"Stories that expire in 24 hours"** — TTL-bucketed object store and feed cache.
+
+### Anti-signals (looks like this design, isn't)
+
+- **"Live broadcast of a creator to millions of viewers"** — that's live-video streaming (YouTube Live, Twitch); needs HLS, ingest, and per-viewer low latency.
+- **"In-app photo editor with filters running on the phone"** — client-side image processing; not a backend system at all.
+- **"Cloud photo backup (Google Photos / iCloud Photos)"** — has no social graph; it's a sync/backup design (closer to Dropbox).
+
+## Further Reading
+
+- Instagram Engineering — "What Powers Instagram: Hundreds of Instances, Dozens of Technologies".
+- Instagram blog — "Sharding & IDs at Instagram" (Postgres function variant of Snowflake).
+- *System Design Interview Vol. 2* (Alex Xu), Instagram chapter.
+- AWS blog — "Amazon S3 + CloudFront for media at scale" patterns.
+
+## Variant Prompts
+
+- **"What if uploads are 100× this (1M photos/min)?"** — parallel transcode fleet, regional ingest, partition the photo store by `user_id`.
+- **"What if global feed reads must be < 50 ms?"** — CDN-cached thumbnails, per-region feed cache, precomputed top-N for active users.
+- **"What if no photo can ever be lost?"** — S3 versioning + cross-region replication; checksum on upload and on every retrieval.
+- **"What if the team only has 2 engineers?"** — Firebase Storage + Cloudinary for transcode + Firestore for feed; defer the recsys to a managed service.

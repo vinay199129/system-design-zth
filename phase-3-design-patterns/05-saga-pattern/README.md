@@ -123,3 +123,84 @@ Compensating actions must be **idempotent** — they may be invoked more than on
 ## Deep Dive: Saga State Recovery
 
 The orchestrator maintains a **saga log** — a persistent record of which steps completed and which are pending. If the orchestrator crashes mid-saga, it reads the log on recovery and resumes from the last completed step. This log is typically stored in a durable database with the saga state machine (states: STARTED, STEP_N_COMPLETE, COMPENSATING, COMPLETED, FAILED). Each transition is written atomically. In interviews, mention this explicitly: "The saga orchestrator persists its state so it can recover from crashes and resume or compensate correctly."
+
+---
+
+## First-time Recognition Signals
+
+When you read a brand-new system design prompt, this pattern is the right tool if you see:
+
+- **"Multi-step business transaction across services"** (order → reserve inventory → charge payment → notify shipping) — saga sequences the steps.
+- **"Each service owns its own DB / no distributed transaction available"** — XA / 2PC is off the table; compensation is your atomicity story.
+- **"Need to undo earlier steps if a later step fails"** (refund payment if shipping cannot allocate) — compensating actions are saga's core.
+- **"Long-running workflow with human approvals / delays"** (loan application, KYC) — orchestration sagas (Temporal, Camunda, Step Functions).
+- **"Microservices, each with its own database, doing one logical operation"** — choreographed sagas via events, or orchestrated sagas via a workflow engine.
+
+### Anti-signals (looks like this pattern, isn't)
+
+- **"Single DB / single service"** — a local ACID transaction is simpler, faster, and correct; saga is overkill.
+- **"All steps inside one trusted service"** — transactional outbox + retries is enough; you don't need compensations.
+- **"Strict atomicity required across services"** — saga is eventually atomic. If you must roll back as if nothing happened, redesign the boundary or use a globally consistent DB.
+
+---
+
+### Intuition
+
+A saga is how you fake a distributed transaction across services that don't share a database. Each step is a local transaction that publishes "I'm done." If a later step fails, the saga runs **compensating actions** on the earlier steps to undo their effects. It's not "atomic" in the ACID sense — there's a window where partial work is visible — but it's the best we have when a true 2PC across services is too expensive or unavailable.
+
+### Worked Example: Booking saga compensation
+
+Three steps, in order: **(1) Payment** → **(2) Inventory reservation** → **(3) Shipping label**.
+
+**Failure at step 2 (inventory unavailable):**
+
+```
+T0:  Step 1  Payment.charge($100)             → success
+T1:  Step 2  Inventory.reserve(item=X, qty=1) → FAILURE (out of stock)
+T2:  Compensate Step 1: Payment.refund($100)
+End: User sees "sorry, out of stock; refund issued"
+```
+
+Compensations fired: **Payment.refund** only. No shipping was reserved → no compensation needed there.
+
+**Failure at step 3 (shipping integration timeout):**
+
+```
+T0:  Step 1  Payment.charge($100)             → success
+T1:  Step 2  Inventory.reserve(item=X, qty=1) → success
+T2:  Step 3  Shipping.createLabel(addr=Y)     → TIMEOUT
+T3:  Retry Step 3 (with backoff)              → still failing
+T4:  Compensate Step 2: Inventory.release(item=X, qty=1)
+T5:  Compensate Step 1: Payment.refund($100)
+End: Order marked FAILED, user sees "we couldn't ship; refund issued"
+```
+
+Compensations fired: **Inventory.release**, then **Payment.refund** — **in reverse order** (LIFO unwinding).
+
+| Failing step | Compensations fired | Order |
+|---|---|---|
+| 1 (Payment) | none | — |
+| 2 (Inventory) | Payment.refund | reverse |
+| 3 (Shipping) | Inventory.release, Payment.refund | reverse |
+
+**Two non-negotiable properties:**
+
+1. Compensations run **in reverse order** of the original steps.
+2. Compensations must be **idempotent** — they may run twice on retry (e.g., `refund(payment_id)` should be a no-op the second time).
+
+**Subtle trap:** what if compensation itself fails? `Payment.refund` times out — you can't just give up; you've taken the customer's money. **Resolution:** mark the saga as `PENDING_MANUAL` and route to an ops queue. Sagas guarantee *eventual* atomicity, not strict atomicity — design for the manual-intervention case from day one.
+
+**Choreography vs orchestration:**
+
+| Approach | Pros | Cons |
+|---|---|---|
+| Choreography (each service listens for events) | Loosely coupled; no central component | Hard to see the whole flow; testing is painful |
+| Orchestration (central saga coordinator) | Visible flow; easier debugging | Coordinator is a single point of failure (mitigate with Temporal / Raft-backed store) |
+
+### Further Reading
+
+- [Chris Richardson — Microservices.io: Saga pattern](https://microservices.io/patterns/data/saga.html) — the standard reference.
+- [Microsoft — Saga distributed transaction pattern](https://learn.microsoft.com/en-us/azure/architecture/reference-architectures/saga/saga)
+- [Temporal — Sagas, compensation, and workflows](https://docs.temporal.io/encyclopedia/application-design-patterns) — orchestrator with built-in retry & compensation.
+- Hector Garcia-Molina & Kenneth Salem, *Sagas* (SIGMOD '87) — the original paper coining the term.
+

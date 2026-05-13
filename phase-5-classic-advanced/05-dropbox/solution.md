@@ -224,3 +224,35 @@ When a file changes on one device, other devices need to know:
 - **Real-time collaboration:** Layer a CRDT-based collaborative editing system on top of the sync infrastructure for office documents.
 - **Ransomware detection:** Detect abnormal patterns (mass encryption of files) and freeze sync, alerting the user.
 - **Tiered storage:** Automatically migrate infrequently accessed file versions to cheaper cold storage.
+
+---
+
+## First-time Recognition Signals
+
+When the interviewer's prompt sounds like this, the Dropbox playbook (chunked content-addressable storage + delta sync + metadata service + version history) is the right answer:
+
+- **"Sync a folder across my laptop, phone, and the web"** — file sync with metadata + chunk service is the spine.
+- **"Resumable upload of a 5 GB file"** — content-defined chunking + per-chunk upload.
+- **"Restore an earlier version of a file"** — versioned metadata with immutable chunks.
+- **"Two devices edit the same file offline; reconcile when both come online"** — conflict resolution with sibling files or last-writer-wins + history.
+- **"Share a folder with another user with read/write permissions"** — ACL service layered on the metadata store.
+
+### Anti-signals (looks like this design, isn't)
+
+- **"Photo sharing app with a public feed"** — that's Instagram; needs a social graph and a feed service.
+- **"Real-time collaborative editing of a document"** — that's CRDT / OT (Google Docs); chunk sync arrives too coarsely.
+- **"S3-style object store API for developers"** — that's the *primitive* underneath Dropbox; no sync clients, no metadata service.
+
+## Further Reading
+
+- Dropbox Engineering — "Magic Pocket: Inside Dropbox's Exabyte-Scale Storage System".
+- Dropbox blog — "Streaming file synchronization" (the sync-protocol post).
+- *System Design Interview Vol. 2* (Alex Xu), Dropbox chapter.
+- "A Low-bandwidth Network File System" (LBFS) — Muthitacharoen et al., the original Rabin-fingerprint chunking idea.
+
+## Variant Prompts
+
+- **"What if there are 100× more files/day?"** — more chunk servers, more aggressive content-defined chunking + cross-user dedup.
+- **"What if sync latency must be < 50 ms globally?"** — block-level delta sync (only changed chunks); regional metadata replicas; CRDT-based diffs for tiny edits.
+- **"What if no data can ever be lost?"** — multi-region S3, immutable append-only sync journal, periodic Merkle-tree integrity checks.
+- **"What if the team only has 2 engineers?"** — rclone + S3 + Postgres metadata + a thin sync daemon; defer dedup until storage cost demands it.

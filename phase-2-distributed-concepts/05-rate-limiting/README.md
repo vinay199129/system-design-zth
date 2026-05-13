@@ -180,3 +180,76 @@ function is_allowed(user_id, limit, window_seconds):
 - **~0.003% error rate:** The weighted approximation is extremely accurate in practice (Cloudflare measured this).
 
 **Scaling:** Single Redis instance handles ~100K operations/sec. For higher scale, shard by user ID across Redis Cluster nodes. Discord uses this pattern to rate limit millions of concurrent users.
+
+---
+
+## First-time Recognition Signals
+
+When you read a brand-new system design prompt, this topic is the right tool if you see:
+
+- **"Protect the API from abuse / brute-force / scraping"** — per-IP or per-API-key rate limiting at the gateway.
+- **"Free vs paid tiers with different request quotas"** — token-bucket or leaky-bucket per API key.
+- **"Login / signup / password-reset endpoint flood"** — short, strict limits with exponential backoff.
+- **"Prevent a misbehaving client from taking down the service"** — fairness limits per tenant.
+- **"Public SMS / email sending endpoint with cost per request"** — quota enforcement is mandatory before the third-party bill explodes.
+
+### Anti-signals (looks like this topic, isn't)
+
+- **"Smooth out a traffic spike to a slow downstream service"** — a queue/buffer is the right tool; rate limiting *rejects* excess, queueing *delays* it.
+- **"Internal RPC between trusted microservices with predictable load"** — concurrency limits / circuit breakers usually suffice; per-call rate limiting is overkill.
+- **"Coalesce repeated writes to the same key"** — that is batching or write coalescing, not rate limiting.
+
+---
+
+### Intuition
+
+Rate limiting is a polite "no" — a way to keep abusive or runaway clients from starving the well-behaved ones. The four common algorithms (fixed window, sliding window, leaky bucket, token bucket) trade exactness for memory and computation. Token bucket is the workhorse: it allows short *bursts* (using saved-up tokens) while enforcing a steady-state rate — which matches how most real clients actually use APIs.
+
+### Worked Example: Token-bucket math (cap=100, refill=10/s)
+
+Bucket capacity = 100 tokens, refill = 10 tokens/sec. Initially full (100 tokens). Each request consumes 1 token. Refusals return HTTP 429.
+
+**Phase 1 — instantaneous burst of 150 requests at T=0:**
+
+```
+Available tokens at T=0    = 100
+Requests 1..100           → tokens 100→0   → all accepted
+Requests 101..150         → no tokens      → 50 rejected (429)
+```
+
+**Phase 2 — sustained 5 req/s for 60 s starting at T=0:**
+
+```
+Each second: refill 10, consume 5 → net +5 tokens/s
+T = 1s:  tokens = 0 + 10 − 5 = 5
+T = 2s:  tokens = 5 + 10 − 5 = 10
+...
+T = 20s: tokens cap at 100 (bucket full again)
+All 60 × 5 = 300 requests accepted (steady rate well under refill).
+```
+
+**Phase 3 — at T=60s, another instantaneous burst of 150:**
+
+```
+Available tokens at T=60s = 100 (bucket refilled during steady phase)
+Same as Phase 1: 100 accepted, 50 rejected.
+```
+
+| Window | Sent | Accepted | Rejected |
+|---|---|---|---|
+| T=0 burst | 150 | 100 | 50 |
+| T=0–60 s steady | 300 | 300 | 0 |
+| T=60 s burst | 150 | 100 | 50 |
+| **Total** | **600** | **500** | **100** |
+
+**Surprise:** the refill rate (10/s) is the *steady-state* limit, but the cap (100) lets clients burst at 10× that rate momentarily. Many teams misconfigure `cap = refill_rate` (no burst), which breaks any client that batches requests. **Lesson:** the cap is your burst budget — size it for the *largest reasonable batch* your legitimate clients send.
+
+For distributed enforcement, implement the bucket in Redis with `INCR + EXPIRE` (or the official `CL.THROTTLE` from RedisCell), and let every gateway node read the same counter.
+
+### Further Reading
+
+- [Stripe — Scaling your API with rate limiters](https://stripe.com/blog/rate-limiters) — the canonical industry post; explains token vs leaky bucket.
+- [Cloudflare — How we built rate limiting capable of scaling to millions of domains](https://blog.cloudflare.com/counting-things-a-lot-of-different-things/) — counting-things-fast tricks.
+- Brandon Rhodes / Florian Heinle, *GCRA: A Generic Cell Rate Algorithm* — the math behind sliding-window rate limiting in O(1) memory.
+- [Envoy — Global rate-limit service docs](https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/other_features/global_rate_limiting)
+

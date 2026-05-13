@@ -122,3 +122,59 @@ Hotspots occur when one shard receives disproportionate traffic. Common causes a
 **Practical impact:** When a node joins or leaves, only ~1/N of the data needs to move. Compare this to modulo hashing where all data reshuffles — at scale, this difference is the difference between a 30-second rebalance and a multi-hour outage.
 
 **Interview tip:** Draw the ring. Interviewers love seeing you sketch the hash ring, place nodes, show where a key lands, then demonstrate what happens when a node is added. It's one of the most effective whiteboard explanations in system design.
+
+---
+
+## First-time Recognition Signals
+
+When you read a brand-new system design prompt, this topic is the right tool if you see:
+
+- **"Writes exceed what one database can absorb"** (millions of writes/sec, multi-TB working set) — sharding is the answer; replication does not scale writes.
+- **"Per-user / per-tenant data with a natural shard key"** (user_id, tenant_id, conversation_id) — clean partitioning by that key avoids cross-shard joins.
+- **"Add and remove nodes with minimum data movement"** — consistent hashing with virtual nodes.
+- **"Time-series data with rolling windows / TTL"** — range-shard by time so old shards can be dropped wholesale.
+- **"Hot key suspicion"** (celebrity, trending item, single tenant dominates traffic) — call out hot-key mitigation (split, replicate, route).
+
+### Anti-signals (looks like this topic, isn't)
+
+- **"Read-heavy, write-light single DB at 80% capacity"** — read replicas first; sharding is operationally heavy and premature.
+- **"Need cross-shard transactions on most writes"** — sharding makes transactions painful; either reshape the schema, denormalize, or use a globally consistent DB (Spanner).
+- **"Dataset is < 100 GB and fits in RAM on one node"** — sharding adds complexity with no payoff; vertical scale or read replicas.
+
+---
+
+### Intuition
+
+Sharding is what you do when a single machine can no longer hold or serve your data — you split rows by some key and put each split on its own machine. The whole game is the **shard key**: pick well and traffic spreads evenly; pick badly and one shard handles 80 % of the load while the others nap. The deepest trap is *celebrities* — accounts so popular they dominate a single shard no matter how you slice — and *time-correlated hot keys* like "today's date" or "current month".
+
+### Worked Example: Picking a shard key for Uber rides
+
+You're sharding the `trips` table. Three candidate keys:
+
+| Candidate | Write skew | Cross-shard query cost | Celebrity / hot-city risk |
+|---|---|---|---|
+| `rider_id` | Low — riders take 1–4 trips/day | "All trips in city X today" → fan-out across all shards | None (no single rider dominates) |
+| `(city, day)` | **High** — NYC on NYE = single shard meltdown | "Rider's trip history" → fan-out; "city throughput dashboard" → 1 shard ✅ | **Severe** (peak cities × peak days collide) |
+| `trip_id` (random/snowflake) | Lowest — uniform | Both rider-history and city-feed fan out | None |
+
+**Working through New Year's Eve in NYC.** Suppose NYC accounts for 1 % of US trip volume on an average *day*, but during the ball drop it surges to 10× that for two hours.
+
+```
+Average NYC/day:       1% × 1M US trips/day = 10,000 trips/day = 7 trips/min
+NYE peak hour at 10×:  100,000 trips/hour   = 1,700 trips/min = 28 writes/sec
+Sustained ball-drop minute (10× of peak hour): ~280 writes/sec
+```
+
+For `(city='NYC', day='2024-12-31')`, that single partition takes **~300 sustained writes/sec with 2k+ peak**, while every other shard naps. A shard sized for 50k writes/sec total can survive — but you've paid for 50 shards' capacity to serve one.
+
+**The actual production answer:** `rider_id` as the primary shard key, with a **secondary materialised view** indexed by `(city, hour)` for analytics. Uniform write distribution; accept fan-out on the rare city-dashboard query.
+
+**Surprise:** "logical" keys like `(city, day)` look natural and almost always lose. **Lesson:** pick the shard key for the *write pattern*, not the read pattern. Denormalize or replicate for reads.
+
+### Further Reading
+
+- [Vitess — Sharding documentation](https://vitess.io/docs/user-guides/configuration-basic/sharding/) — YouTube's MySQL-at-scale layer; `vindex` design.
+- DDIA ch. 6 — partitioning by key range vs hash, with secondary indexes.
+- [Slack Engineering — Scaling Datastores at Slack with Vitess](https://slack.engineering/scaling-datastores-at-slack-with-vitess/) — real shard-key evolution.
+- [Discord — How Discord Stores Trillions of Messages](https://discord.com/blog/how-discord-stores-trillions-of-messages) — choosing partition keys under hot-key pressure.
+

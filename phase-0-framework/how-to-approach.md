@@ -2,6 +2,54 @@
 
 > The RESHADED framework: 8 steps, 45 minutes, every time.
 
+## The Reference 3-Tier Web Architecture
+
+Every system design is a variation on this picture. Memorise the boxes — the interview is about *which ones you need*, *which ones you scale*, and *where the bottleneck moves first*.
+
+```mermaid
+flowchart TD
+    Client[Client<br/>Web / Mobile / IoT]
+    DNS[DNS]
+    CDN[CDN<br/>Edge cache for static + media]
+    LB[Load Balancer<br/>L4 or L7]
+    App1[App Server 1<br/>Stateless]
+    App2[App Server 2<br/>Stateless]
+    App3[App Server N<br/>Stateless]
+    Cache[Distributed Cache<br/>Redis / Memcached]
+    Primary[(Primary DB<br/>writes)]
+    Replica1[(Read Replica 1)]
+    Replica2[(Read Replica 2)]
+    Queue[Message Queue<br/>Kafka / SQS]
+    Worker[Background Workers<br/>async jobs]
+    Blob[Blob Store<br/>S3]
+
+    Client --> DNS
+    Client --> CDN
+    CDN --> LB
+    DNS --> LB
+    LB --> App1
+    LB --> App2
+    LB --> App3
+    App1 --> Cache
+    App2 --> Cache
+    App3 --> Cache
+    App1 --> Primary
+    App2 --> Replica1
+    App3 --> Replica2
+    Primary --> Replica1
+    Primary --> Replica2
+    App1 --> Queue
+    App2 --> Queue
+    App3 --> Queue
+    Queue --> Worker
+    Worker --> Primary
+    Worker --> Blob
+    App1 --> Blob
+    Blob --> CDN
+```
+
+Three tiers, plus async: presentation (CDN + LB), application (stateless app servers + cache), data (primary + replicas + blob + queue). Drop any box you don't need. Add specialised boxes (search index, geospatial index, ML scorer) for the specific question.
+
 ## The Framework
 
 RESHADED stands for:

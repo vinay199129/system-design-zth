@@ -60,6 +60,22 @@ sequenceDiagram
     N1->>N5: Heartbeat (term=4, I am leader)
 ```
 
+#### Raft State Machine (Follower ↔ Candidate ↔ Leader)
+
+Every Raft node is in exactly one of three states at any moment. The transitions below capture the entire protocol's control flow.
+
+```mermaid
+stateDiagram-v2
+    [*] --> Follower
+    Follower --> Candidate: election timeout<br/>(no heartbeat received)
+    Candidate --> Candidate: split vote<br/>(start new term, retry)
+    Candidate --> Leader: wins majority of votes
+    Candidate --> Follower: discovers leader<br/>or higher term
+    Leader --> Follower: discovers node<br/>with higher term
+```
+
+Note the asymmetry: a Leader can only step *down* to Follower (never directly to Candidate) — it must first re-discover the cluster's current term. This is what prevents two leaders in the same term: any node observing a higher term immediately demotes.
+
 **Raft states:** Every node is in one of three states: **Follower** (default), **Candidate** (seeking votes), **Leader** (handles requests).
 
 **Leader election flow:**
@@ -181,3 +197,78 @@ Notice: N=4 tolerates the same number of failures as N=3, but requires an additi
 - **7 nodes** — rarely needed. Tolerates 3 failures. Only for critical infrastructure requiring extreme availability.
 
 **Interview tip:** When an interviewer asks "how many ZooKeeper nodes?", say "5 — it tolerates 2 failures, which covers a node crash plus a rolling upgrade simultaneously." This level of operational reasoning impresses more than theoretical explanations.
+
+---
+
+## First-time Recognition Signals
+
+When you read a brand-new system design prompt, this topic is the right tool if you see:
+
+- **"Elect a leader / primary out of N replicas"** — Raft or Paxos under the hood, typically delegated to ZooKeeper / etcd / Consul.
+- **"Replicated state machine / config store / service discovery"** — etcd, ZooKeeper, Consul are the canonical answers.
+- **"Distributed lock or lease"** (one worker may execute the cron, exclusive write to a key) — backed by a consensus store.
+- **"Atomic commit across multiple nodes"** — two-phase commit (and its problems) or consensus-backed transactions.
+- **"Linearizable register / counter across a cluster"** — consensus is the only general answer.
+
+### Anti-signals (looks like this topic, isn't)
+
+- **"Just need an HA load balancer"** — managed LBs handle their own failover; don't claim you'd implement Paxos.
+- **"Eventual agreement on a value is fine"** — gossip / CRDTs / anti-entropy are far cheaper than consensus.
+- **"High-throughput logging or analytics"** — consensus protocols cap at low-thousands of ops/sec per group; use Kafka or a sharded store and avoid consensus on the hot path.
+
+---
+
+### Intuition
+
+Consensus is how a group of machines that don't fully trust each other (one might crash, packets might be lost) agree on a single value despite the chaos. The headline result is that you only need a *majority* to agree — a minority can be wrong, slow, or partitioned away, and the system still makes progress. Raft makes the problem approachable by carving it into three pieces: elect a leader, replicate a log, and prove safety. The whole field is summarised in one rule: **prefer odd cluster sizes (3, 5, 7) and survive `⌊N/2⌋` failures.**
+
+### Worked Example: Quorum math for N=5
+
+Cluster size = 5 nodes. Quorum = `⌊5/2⌋ + 1 = 3`.
+
+**Failure tolerance:** can lose 2 nodes and still form a quorum of 3.
+
+```
+Surviving nodes  Quorum reachable?
+5  → 5 ≥ 3        ✓
+4  → 4 ≥ 3        ✓
+3  → 3 ≥ 3        ✓ (just barely)
+2  → 2 < 3        ✗  cluster becomes unavailable / read-only
+```
+
+**Why is N=4 ≡ N=3 fault-wise?**
+
+| N | Quorum | Tolerated failures | Cost vs prev |
+|---|---|---|---|
+| 3 | 2 | 1 | baseline |
+| 4 | 3 | 1 | **+1 node, zero extra failure budget** |
+| 5 | 3 | 2 | +2 nodes, +1 failure budget |
+| 6 | 4 | 2 | **+1 node, zero extra failure budget** |
+| 7 | 4 | 3 | +2 nodes, +1 failure budget |
+
+N=4 still requires 3 to ack a write; you can only lose 1 (4 − 1 = 3 = quorum). Going from 3 → 4 buys you nothing but cost. **Hence the convention: 3, 5, 7.**
+
+**Picking the size:**
+
+- **3 nodes** — minimum viable. Use for non-critical control planes (small etcd in dev clusters).
+- **5 nodes** — production default. Tolerates one node *plus* a rolling upgrade simultaneously. Used by serious etcd, Consul, ZooKeeper deployments.
+- **7 nodes** — only for cross-region consensus where individual nodes are unreliable. The write latency cost is real (must talk to 4 nodes for every commit, often across regions).
+
+**Write-latency cost back-of-envelope:**
+
+```
+Single-AZ Paxos/Raft round-trip ≈ 1–2 ms
+Cross-AZ within region          ≈ 3–10 ms
+Cross-region (US ↔ EU)          ≈ 80–120 ms
+```
+
+**Surprise:** going from N=5 (one region) to N=7 (three regions, 3+2+2) is rarely worth it — cross-region quorum dominates latency, and you've usually solved the wrong problem. **Lesson:** treat consensus as expensive metadata storage. Use it for leader election, config, schema — *not* for high-throughput application data.
+
+### Further Reading
+
+- Ongaro & Ousterhout, *In Search of an Understandable Consensus Algorithm* (USENIX ATC '14) — the Raft paper.
+- [The Secret Lives of Data — Raft visualization](https://thesecretlivesofdata.com/raft/) — interactive walkthrough.
+- Lamport, *Paxos Made Simple* (2001) — finally-readable Paxos.
+- [etcd — Architecture](https://etcd.io/docs/v3.5/learning/design-learner/) — production Raft running every Kubernetes cluster.
+- [Jepsen analyses of etcd / Consul / ZooKeeper](https://jepsen.io/analyses) — what breaks under partition.
+

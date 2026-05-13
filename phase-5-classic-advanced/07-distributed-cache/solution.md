@@ -219,3 +219,35 @@ Nodes discover and monitor each other using a **gossip protocol:**
 - **RDMA networking:** Bypass kernel networking stack for sub-100μs latency in data center environments.
 - **Tiered storage:** Extend cache to SSD for warm data (Redis on Flash), keeping hot data in RAM and warm data on NVMe SSD.
 - **Multi-model support:** Add native support for JSON documents, time-series, graph, and vector search within the cache engine.
+
+---
+
+## First-time Recognition Signals
+
+When the interviewer's prompt sounds like this, the distributed-cache playbook (in-memory KV + consistent hashing + replication + eviction + gossip) is the right answer:
+
+- **"Sub-millisecond lookup of hot data"** — in-memory KV; disk-backed stores can't hit this latency.
+- **"Auto-shard across N nodes and rebalance when nodes are added/removed"** — consistent hashing with virtual nodes.
+- **"Survive a node crash with a hot replica taking over"** — primary/replica replication + failover.
+- **"Cap memory and evict cold data automatically"** — LRU / LFU / TTL eviction.
+- **"Pipelining and multi-get for throughput-heavy workloads"** — Redis-Cluster-style client with slot awareness.
+
+### Anti-signals (looks like this design, isn't)
+
+- **"Durable transactional store for orders / payments"** — that's an OLTP database; a cache is not your source of truth.
+- **"Pub/sub fan-out across many services"** — that's a message bus (Kafka, SNS, NATS). Redis pub/sub is a feature, not the same shape at scale.
+- **"Per-user session affinity for stateful WebSockets"** — that's sticky load balancing; the cache is a *side* of that design, not the design itself.
+
+## Further Reading
+
+- Redis docs — "Redis Cluster Specification" (the canonical reference).
+- Facebook Engineering — "Scaling Memcache at Facebook" (NSDI 2013).
+- *Designing Data-Intensive Applications* (Kleppmann), Chapters 5 (Replication) and 6 (Partitioning).
+- *System Design Interview Vol. 2* (Alex Xu), Distributed Cache chapter.
+
+## Variant Prompts
+
+- **"What if QPS is 100× this (10M ops/s)?"** — more shards, client-side hashing to skip a proxy hop, read-replicas for hot keys.
+- **"What if global p99 must be < 50 ms?"** — already in-range for in-region; consider edge KV (Cloudflare Workers KV, Cloudfront Functions) for cross-region reads.
+- **"What if cache misses are unacceptable on restart?"** — AOF persistence + replica with replication backlog; warm replicas from a snapshot on cold start.
+- **"What if the team only has 2 engineers?"** — managed ElastiCache / Memorystore / Upstash; no operational burden.

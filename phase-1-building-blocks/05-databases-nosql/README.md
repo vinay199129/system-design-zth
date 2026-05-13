@@ -141,3 +141,68 @@ This enables:
 **Global Secondary Index (GSI):** Enables alternate query patterns by projecting data with a different key structure. For example, a GSI with `PK = status` and `SK = created_at` lets you query all orders by status sorted by date — something the base table cannot do.
 
 **What to say in an interview:** "I would use DynamoDB with a single-table design. My partition key is user_id, and my sort key encodes the entity type and timestamp. This gives me O(1) access to a user's data and efficient range queries within a partition. For cross-partition queries like 'all orders by status,' I would create a GSI."
+
+---
+
+## First-time Recognition Signals
+
+When you read a brand-new system design prompt, this building block is the right tool if you see:
+
+- **"Massive horizontal scale / petabytes / billions of rows"** that outgrows a single RDBMS — Cassandra / DynamoDB / Bigtable shard linearly.
+- **"Single-record lookups by key, no joins"** (user profile by user_id, session by session_id) — a KV store is the lowest-latency answer.
+- **"Flexible / evolving schema, fields differ per record"** — document stores (MongoDB, DynamoDB) absorb schema drift without migrations.
+- **"Write-heavy with eventual consistency tolerated"** (IoT telemetry, social feeds, analytics events) — wide-column / LSM-tree stores excel here.
+- **"Time-series data with TTL / append-only"** — InfluxDB, Cassandra with TTL, or DynamoDB with TTL are purpose-built.
+
+### Anti-signals (looks like this building block, isn't)
+
+- **"Multi-row ACID transaction across entities"** (transfer money, atomically deduct stock and create order) — most NoSQL gives only single-key atomicity; reach for SQL or Spanner.
+- **"Ad-hoc reporting with arbitrary `GROUP BY`"** — secondary indexes in NoSQL are limited; export to a warehouse (BigQuery/Snowflake) for analytics.
+- **"Strong consistency on every read by default"** — most NoSQL is eventual; explicit quorum reads (R+W>N in Dynamo-style) cost latency, so call that out.
+
+---
+
+### Intuition
+
+A NoSQL database is what you get when you trade SQL's "any query, anywhere" promise for raw scale: pick the access pattern *first*, then shape the data to fit. In Cassandra/Dynamo, the partition key decides which machine owns your row, and a bad key creates "hot partitions" that no amount of money can scale around. Document stores like Mongo are friendlier to evolving schemas; key-value stores are friendlier to ops. The wrong interview question is "SQL or NoSQL?" — the right one is "which access pattern, at what cardinality, with what retention?"
+
+### Worked Example: Cassandra partition design for IoT readings
+
+5,000,000 devices, each emitting 1 reading/min for 1 year. Reading = 100 B.
+
+```
+Total rows  = 5M × 525,600 (min/yr) = 2.628 × 10^12 ≈ 2.6 trillion rows
+Total data  = 2.6T × 100 B          ≈ 260 TB
+```
+
+**Option A — partition key = `device_id`:**
+- Each device's partition holds `525,600 rows × 100 B = 52.5 MB`.
+- Cassandra recommends ≤ 100 MB per partition (compaction stalls beyond ~400 MB) — within budget for year 1, breaks at year 2.
+- "Last 24 h for device X" is one partition, sorted by clustering key `(ts DESC)`. ✅
+- "All readings between 10:00–10:01 across fleet" hits every node — fan-out scan. ✗
+
+**Option B — partition key = `(device_id, year_month)`:**
+- Partition size = `30 × 1,440 × 100 B = 4.3 MB`. Tiny. ✅
+- TTL drop of old data = drop one partition cleanly. ✅
+- "Last 24 h" crossing a month boundary = 2 partitions. Negligible.
+
+**Option C — partition key = `(device_id, year_month, day)`:**
+- Partition = `1,440 × 100 B = 144 KB`. Cheap reads.
+- But partition count explodes: `5M × 365 ≈ 1.8B partitions/year`. Metadata bloat hurts.
+
+| Choice | Avg partition | # Partitions/yr | "Latest 24h" cost | TTL friendliness |
+|---|---|---|---|---|
+| `device_id` | 52 MB | 5 M | 1 read | Hard (row-level deletes leave tombstones) |
+| `(device_id, ym)` | 4.3 MB | 60 M | 1–2 reads | Trivial (drop monthly partition) |
+| `(device_id, ym, day)` | 144 KB | 1.8 B | 1 read | Trivial but metadata-heavy |
+
+**Surprise:** many teams pick option A and silently bleed for 6 months as old data piles up — tombstones make reads slow long before disk fills. **Lesson:** partition keys must encode both *access pattern* and *retention policy*. `(device_id, year_month)` is the canonical Cassandra IoT answer.
+
+### Further Reading
+
+- DeCandia et al., *Dynamo: Amazon's Highly Available Key-value Store* (SOSP '07) — consistent hashing + sloppy quorum.
+- Chang et al., *Bigtable: A Distributed Storage System for Structured Data* (OSDI '06) — wide-column model that inspired HBase/Cassandra.
+- DDIA ch. 3 — log-structured vs page-oriented storage engines (foundational for NoSQL internals).
+- [Discord — How Discord Stores Trillions of Messages](https://discord.com/blog/how-discord-stores-trillions-of-messages) — Cassandra → ScyllaDB migration, real partition pain.
+- [DataStax — Data Modeling by Example](https://www.datastax.com/learn/data-modeling-by-example) — practical Cassandra patterns.
+

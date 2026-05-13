@@ -228,3 +228,35 @@ for channel in [push, email, sms]:
 - **WebSocket channel:** Real-time in-app notifications without polling.
 - **ML-based send time optimization:** Send when the user is most likely to engage.
 - **Unsubscribe management:** One-click unsubscribe with preference center.
+
+---
+
+## First-time Recognition Signals
+
+When the interviewer's prompt sounds like this, the notification-system playbook (multi-channel fan-out + per-channel queues + retry-with-backoff + DLQ) is the right answer:
+
+- **"Send push + SMS + email from one API"** — multi-channel fan-out behind a single notify-svc.
+- **"Respect user preferences and quiet hours"** — preference service consulted before enqueue.
+- **"Retry failed deliveries with exponential backoff"** — DLQ + retry queue with jitter.
+- **"Don't double-send if the upstream caller retried"** — idempotent `notification_id` dedupe at the worker.
+- **"Schedule a reminder email for tomorrow at 9 a.m. in the user's timezone"** — scheduled-job tier + dispatch queue.
+
+### Anti-signals (looks like this design, isn't)
+
+- **"Real-time chat between two users with delivery receipts"** — that's the chat-system (WebSocket-based), not one-way notification fan-out.
+- **"Internal event broadcast between microservices"** — that's pub/sub or a service bus (Kafka, SNS, EventBridge), not user-facing notifications.
+- **"In-app banner shown to logged-in users in real time"** — feature-flag + WebSocket push from the app; the SMS/email pipeline is overkill.
+
+## Further Reading
+
+- LinkedIn Engineering — "Real-time delivery architecture at LinkedIn" (notifications at scale).
+- Slack Engineering — "Scaling Slack" series, especially the notification dispatch piece.
+- *System Design Interview Vol. 1* (Alex Xu), Chapter 11 — Design a Notification System.
+- Apple APNS and Firebase FCM docs — token lifecycle, feedback channel, retry semantics.
+
+## Variant Prompts
+
+- **"What if volume is 100× this (1B notifications/day)?"** — partition queues by `user_id` range; more workers per channel; throttle to provider rate limits per partition.
+- **"What if latency must be < 50 ms end-to-end?"** — push-only path with regional edge dispatchers close to APNS/FCM POPs; drop email/SMS from this SLA.
+- **"What if no notification can ever be lost?"** — durable queue (Kafka with replication), DLQ + retry, exactly-once at the worker via idempotency key.
+- **"What if the team only has 2 engineers?"** — SendGrid + Twilio + FCM SDKs, no custom router; preference service is the only thing you build.

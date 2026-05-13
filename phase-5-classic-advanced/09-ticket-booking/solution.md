@@ -287,3 +287,35 @@ Displaying real-time seat availability to 100K concurrent users:
 - **Waitlist:** When an event sells out, offer a waitlist. Released holds or cancellations are offered to waitlist users.
 - **Group booking:** Allow groups to coordinate seat selection in a shared session.
 - **NFT tickets:** Issue tickets as blockchain tokens for verifiable ownership and controlled resale.
+
+---
+
+## First-time Recognition Signals
+
+When the interviewer's prompt sounds like this, the ticket-booking playbook (seat-inventory + pessimistic hold with TTL + virtual waiting room + flash-sale throttling) is the right answer:
+
+- **"Reserve a specific seat for an event with a 10-minute hold"** — seat-lock service with TTL.
+- **"10,000 seats must sell in 30 seconds on sale day"** — virtual waiting room + sharded inventory + flash-sale architecture.
+- **"Two users can't book the same seat — strong consistency required"** — pessimistic lock (SELECT FOR UPDATE) or atomic decrement.
+- **"Cancel and free the seat if payment isn't completed in time"** — hold-expiry sweeper / Redis TTL with event handler.
+- **"Show live seat-map availability"** — read replica or Redis bitmap of seat states; eventually consistent display, strict at commit.
+
+### Anti-signals (looks like this design, isn't)
+
+- **"Hotel room reservation by date range"** — date-range inventory with overlap detection; conflict model is different from exact-seat.
+- **"Restaurant table booking by party size"** — flexible match (round up to next available); no exact-seat semantics.
+- **"Movie showtime listing only, no purchase"** — read-only catalog; no hold or payment flow at all.
+
+## Further Reading
+
+- BookMyShow Engineering blog and Ticketmaster postmortems — search "flash sale architecture".
+- High-Scalability.com — case studies on event sale traffic (e.g. Taylor Swift / Olympics ticketing).
+- *System Design Interview Vol. 2* (Alex Xu), Ticket Booking chapter.
+- *Designing Data-Intensive Applications* (Kleppmann), Chapter 7 — transactions and locking semantics.
+
+## Variant Prompts
+
+- **"What if peak is 100× this?"** — virtual waiting room (queue tokens), sharded inventory by section, pre-warmed Redis cluster.
+- **"What if seat-map reads must be < 50 ms globally?"** — Redis bitmap of seat states cached at the edge; commits still go to the regional primary.
+- **"What if no double-booking is *ever* tolerated?"** — pessimistic lock plus two-phase commit between hold and payment; compensating cancel as a fallback.
+- **"What if the team only has 2 engineers?"** — Postgres `SELECT FOR UPDATE` on a seats table + a simple TTL job; no Redis bitmap, no waiting room until you actually need it.

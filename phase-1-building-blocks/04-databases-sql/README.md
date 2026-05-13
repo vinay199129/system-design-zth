@@ -135,3 +135,68 @@ Sharding is the strategy of splitting a large database into smaller, independent
 **Resharding** (adding or removing shards) is extremely painful. Consistent hashing or range-based partitioning with automatic splitting (like CockroachDB or Vitess) can reduce the pain, but it is never free.
 
 **What to say in an interview:** "I would shard by user_id using consistent hashing so that adding new shards only redistributes a fraction of the data. For queries that cross shards, I would denormalize the data or use an async materialized view that aggregates cross-shard data."
+
+---
+
+## First-time Recognition Signals
+
+When you read a brand-new system design prompt, this building block is the right tool if you see:
+
+- **"ACID transactions / atomic multi-row update"** (payment ledger, inventory decrement, booking confirmation) — SQL with `BEGIN/COMMIT` is the default safe answer.
+- **"Complex relationships and joins"** (users → orders → line items → products) — relational modelling with foreign keys earns clarity points.
+- **"Ad-hoc reporting / analytics / arbitrary `WHERE` clauses"** — SQL's query optimizer beats NoSQL when access patterns are not known up front.
+- **"Strong consistency by default, can pay latency cost"** — a single-leader RDBMS is the simplest path to strong consistency.
+- **"Schema is well-known and changes are reviewed"** — SQL's enforced schema catches bugs that schemaless stores let through.
+
+### Anti-signals (looks like this building block, isn't)
+
+- **"Schemaless documents, fields vary per record"** (user profiles with custom attributes, product catalogues across categories) — a document store fits the data shape better.
+- **"Millions of writes per second on independent rows"** — single-leader SQL caps out long before this; consider sharded SQL (Vitess/Citus/Spanner) or a wide-column store.
+- **"Graph traversals: friends-of-friends, shortest path between nodes"** — recursive CTEs work but a graph DB (Neo4j) is more natural at depth ≥ 3.
+
+---
+
+### Intuition
+
+A SQL database is a meticulous accountant: every write is journalled, every constraint is checked, and a single transaction can touch any row in any table. That rigor is a superpower for billing or inventory — and a tax everywhere else. Indexes are the accountant's binder tabs: they make finding rows fast, but every write now has to update every tab. The art is knowing which tabs are worth their write cost — and which queries deserve a *covering* index that lets the DB answer without even touching the heap.
+
+### Worked Example: Index trade-off on a 100M-row orders table
+
+`orders(id, user_id, status, created_at, total_cents)` — 100 M rows, ~250 B/row → ~25 GB table.
+
+Hot query: `SELECT id, total_cents FROM orders WHERE user_id = ? AND status = 'OPEN' ORDER BY created_at DESC LIMIT 20`.
+
+**Option A — single-column index on `user_id`:**
+
+```
+Index size: 100M × (8 B uid + 8 B rowid) ≈ 1.6 GB
+Lookup: ~5 page reads (B-tree depth) + N heap fetches for the user's orders
+For a user with 500 historic orders: 500 row reads to filter status & re-sort
+p99 latency: 5–30 ms
+```
+
+**Option B — covering composite `(user_id, status, created_at DESC) INCLUDE (id, total_cents)`:**
+
+```
+Index size: 100M × (8+2+8+8+8) ≈ 3.4 GB (~2× single-col)
+Lookup: 4 page reads → 20 rows directly; no heap visit, already sorted
+p99 latency: < 1 ms
+```
+
+| Metric | Single-col | Covering composite |
+|---|---|---|
+| Index size | 1.6 GB | 3.4 GB |
+| Insert overhead | 1 B-tree update | 1 B-tree update (wider page → ~15 % slower) |
+| Read latency p99 | 5–30 ms | < 1 ms |
+| Plan | Index scan → heap fetch → filter → sort | **Index-only scan** |
+
+**Surprise:** the covering index doubles the disk *but* eliminates the heap visit *and* the sort — a 10–30× p99 improvement for read-heavy workloads. **Lesson:** for OLTP top-N queries, a wide covering index almost always wins; for write-heavy tables with rare reads, the slim single-col (or no index) wins. Quote both index size and write-amplification in your interview answer.
+
+### Further Reading
+
+- DDIA ch. 3 (storage & retrieval) + ch. 7 (transactions) — Kleppmann's deep but accessible treatment.
+- [Use The Index, Luke!](https://use-the-index-luke.com/) — Markus Winand's free book; the gold-standard practical SQL indexing reference.
+- [The Internals of PostgreSQL (Hironobu Suzuki)](https://www.interdb.jp/pg/) — page-level mechanics, MVCC, WAL.
+- Verbitski et al., *Amazon Aurora: Design Considerations for High-Throughput Cloud-Native Relational Databases* (SIGMOD '17) — log-is-database architecture.
+- [Jepsen analyses of MySQL & PostgreSQL](https://jepsen.io/analyses) — rare opportunities to see real consistency failures.
+

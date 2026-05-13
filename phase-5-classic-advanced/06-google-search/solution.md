@@ -228,3 +228,35 @@ Multi-tier caching dramatically reduces serving cost:
 - **Knowledge graph integration:** Direct answers for factual queries (entity extraction + knowledge graph lookup).
 - **Personalization:** Adjust ranking based on user's search history, location, and language preferences.
 - **AI-generated summaries:** Use LLMs to synthesize answers from multiple source documents.
+
+---
+
+## First-time Recognition Signals
+
+When the interviewer's prompt sounds like this, the Google-Search playbook (crawler + inverted index + ranking + heavy caching) is the right answer:
+
+- **"Index the web and return results in under 200 ms"** — crawler + inverted index + sharded query fan-out.
+- **"Rank results by relevance, not just match count"** — link-graph (PageRank) + ML ranker on top of TF-IDF / BM25.
+- **"Autocomplete and spell-correct as I type"** — trie + n-grams + did-you-mean.
+- **"Trillions of documents, billions of queries per day"** — index sharding by doc-id; query fan-out + merge.
+- **"Personalize the top results based on user history"** — re-ranking layer with user-context features.
+
+### Anti-signals (looks like this design, isn't)
+
+- **"E-commerce product search with faceted filters and price ranges"** — that's Elasticsearch with structured filters; you don't need a web crawler.
+- **"Search inside a single Slack workspace or Notion site"** — single-tenant search engine; the scale and ranking concerns are completely different.
+- **"Conversational question answering with an LLM"** — RAG (retrieval-augmented generation) over an embedding index; the classic IR pipeline is one component but not the whole design.
+
+## Further Reading
+
+- Brin & Page — "The Anatomy of a Large-Scale Hypertextual Web Search Engine" (1998, the original Google paper).
+- Manning, Raghavan, Schütze — *Introduction to Information Retrieval* (the textbook).
+- *System Design Interview Vol. 2* (Alex Xu), Search chapter.
+- Jeff Dean's talks on Google infrastructure (e.g. "Building Software Systems at Google and Lessons Learned").
+
+## Variant Prompts
+
+- **"What if QPS is 100× higher?"** — more replica fan-out; cache the top-K for popular queries at the query layer; widen the index fleet.
+- **"What if global p99 must be < 50 ms?"** — aggressive result caching at edge; precompute results for head queries; multi-region index replicas.
+- **"What if no document can ever be missed from the index?"** — durable crawl frontier (Kafka), dual indexer pipelines, periodic Merkle-tree comparison.
+- **"What if the team only has 2 engineers?"** — Algolia or OpenSearch managed cluster over your owned corpus; no crawler, no custom ranker.

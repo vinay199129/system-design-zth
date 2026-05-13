@@ -224,3 +224,35 @@ Rules are cached locally with a 30-second TTL to avoid fetching from the config 
 - **Analytics dashboard:** Show rate limit hit metrics per client, endpoint, and rule.
 - **Webhook alerts:** Notify when a client is consistently hitting rate limits.
 - **IP reputation scoring:** Dynamically adjust limits based on client behavior patterns.
+
+---
+
+## First-time Recognition Signals
+
+When the interviewer's prompt sounds like this, the rate-limiter playbook (token bucket + Lua-atomic Redis counters + gateway middleware) is the right answer:
+
+- **"Cap API requests per user to 100/sec / 1000/min"** — direct token-bucket match with refill rate and burst capacity.
+- **"Different tiers — free users get 60/min, paid get 6000/min"** — rule-based multi-tenant limiter with rule store + cached evaluator.
+- **"Return HTTP 429 with Retry-After when over limit"** — standard rate-limit semantics; you should also surface `X-RateLimit-Remaining`.
+- **"Prevent brute-force login attempts"** — per-IP sliding-window-counter on the auth endpoint.
+- **"Protect downstream from a sudden traffic burst"** — token bucket with `burst = 10 × rate` absorbs spikes cleanly.
+
+### Anti-signals (looks like this design, isn't)
+
+- **"Smooth a sustained high incoming rate so the downstream doesn't queue"** — that's load shedding / backpressure / queue buffering, not a hard limiter.
+- **"Fairly share one expensive resource between many tenants"** — that's weighted fair queueing / scheduling, not a 429-returning cap.
+- **"Mitigate volumetric DDoS at the network edge"** — that's L3/L4 protection (Cloudflare, AWS Shield); an L7 limiter is one layer above and won't stop SYN floods.
+
+## Further Reading
+
+- Stripe Engineering — "Scaling your API with rate limiters" (the canonical industry post).
+- Cloudflare blog — "How we built rate limiting capable of scaling to millions of domains".
+- *System Design Interview Vol. 1* (Alex Xu), Chapter 4 — Design a Rate Limiter.
+- *Designing Data-Intensive Applications* (Kleppmann), Chapter 8 — Trouble with Distributed Systems (for the counter-consistency discussion).
+
+## Variant Prompts
+
+- **"What if writes are 100× this (10M RPM)?"** — sharded Redis Cluster with key-sharded counters; per-region limiters with periodic global reconciliation.
+- **"What if reads must be globally < 50 ms?"** — local edge limiters (Cloudflare Workers, Envoy ratelimit filter); accept slight over-limit in exchange for latency.
+- **"What if we cannot lose counter state?"** — Redis with AOF persistence + replica, but small counter loss is usually acceptable; lean into idempotent retry semantics.
+- **"What if the team only has 2 engineers?"** — `limit_req` in Nginx or AWS API Gateway built-in throttling; no custom service.

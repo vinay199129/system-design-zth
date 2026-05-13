@@ -263,3 +263,35 @@ Every 24 hours, a reconciliation job ensures internal records match external ban
 - **Subscription billing:** Recurring payment engine with dunning (retry failed payments), proration, and plan changes.
 - **Instant payouts:** Move from T+2 settlement to real-time payouts via RTP/FedNow rail.
 - **Fraud ML improvements:** Real-time feature store for transaction velocity, device fingerprinting, and behavioral biometrics.
+
+---
+
+## First-time Recognition Signals
+
+When the interviewer's prompt sounds like this, the payment-system playbook (idempotency keys + double-entry ledger + Saga across PSP + daily reconciliation) is the right answer:
+
+- **"Charge a card and refund it; never double-charge if the client retries"** — idempotency-key store is the headline.
+- **"Money must never be lost or duplicated"** — append-only double-entry ledger.
+- **"Multi-step flow across our service, the PSP, and the bank"** — Saga pattern with compensating actions.
+- **"Settle daily with the bank and reconcile differences"** — batch reconciliation job comparing internal ledger with bank statements.
+- **"Auditable trail for every cent"** — immutable ledger entries, no destructive updates.
+
+### Anti-signals (looks like this design, isn't)
+
+- **"P2P money send (Venmo / Cash App)"** — adjacent design with social graph and in-app wallet; idempotency still applies but UX dominates.
+- **"Subscription billing engine (Recurly / Chargebee)"** — sits *on top of* a payment system; the design is about plan management, proration, dunning.
+- **"Cryptocurrency on-chain settlement"** — different consensus model (PoW/PoS), UTXO ledger, no central PSP.
+
+## Further Reading
+
+- Stripe blog — "Designing robust and predictable APIs with idempotency" (industry-defining).
+- Square Engineering — "Building reliable distributed systems for payments".
+- Pat Helland — "Accountants Don't Use Erasers" (immutable-ledger paper).
+- *System Design Interview Vol. 2* (Alex Xu), Payment System chapter.
+
+## Variant Prompts
+
+- **"What if payments are 100× higher peak?"** — partition payments by `payment_id`; autoscale processors; ledger ingest stays async via Kafka.
+- **"What if global authorization p99 must be < 50 ms?"** — regional payment gateways close to PSPs; ledger fan-in is async and cross-region eventual.
+- **"What if no payment can ever be lost?"** — append-only ledger + dual-PSP fallback + idempotency replay; daily reconciliation catches anything.
+- **"What if the team only has 2 engineers?"** — Stripe Connect or Adyen Platform; you build only the ledger / reconciliation view on top of their idempotency primitives.
