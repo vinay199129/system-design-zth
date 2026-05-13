@@ -30,6 +30,23 @@ export const metadata: Metadata = {
     description:
       'Free interactive 60-day system design course with 20 designs, 24 building-block patterns, and built-in progress tracking.',
     type: 'website',
+    url: 'https://vinay199129.github.io/system-design-zth/',
+    siteName: 'System Design Zero to Hero',
+    images: [
+      {
+        url: 'og-image.svg',
+        width: 1200,
+        height: 630,
+        alt: 'System Design Zero to Hero — 60-day interview prep',
+      },
+    ],
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: 'System Design Zero to Hero — 60-day Interview Prep',
+    description:
+      '20 designs · 24 patterns · RESHADED · spaced repetition · Mermaid diagrams.',
+    images: ['og-image.svg'],
   },
   icons: {
     icon: [{ url: 'favicon.svg', type: 'image/svg+xml' }],

@@ -75,3 +75,24 @@ export interface Design {
   /** README.md content (overview / TOC). */
   readmeMarkdown: string | null;
 }
+
+/**
+ * A case study from Phase 1-3 modules' `case-studies/` directories.
+ * One real-world production system (Cloudflare DNS, Memcached @ FB, etc.)
+ * applying the parent module's concept.
+ */
+export interface CaseStudy {
+  id: string;
+  slug: string;
+  title: string;
+  /** "p1" / "p2" / "p3" */
+  phaseId: string;
+  phaseTitle: string;
+  /** The module's slug WITHOUT the order prefix (e.g. "caching"). */
+  moduleId: string;
+  moduleTitle: string;
+  moduleOrder: number;
+  /** Order within the module's case-studies directory. */
+  order: number;
+  markdown: string;
+}

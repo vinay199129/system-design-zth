@@ -9,6 +9,7 @@ const NAV_ITEMS: Array<{ href: string; label: string }> = [
   { href: '/', label: 'Home' },
   { href: '/study', label: 'Study' },
   { href: '/designs', label: 'Designs' },
+  { href: '/case-studies', label: 'Cases' },
   { href: '/patterns', label: 'Patterns' },
   { href: '/redo', label: 'Redo' },
   { href: '/review', label: 'Weekly' },

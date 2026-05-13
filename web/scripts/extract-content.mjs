@@ -606,6 +606,58 @@ writeFileSync(
 );
 
 // --------------------------------------------------------------------------
+// Case studies — Phase 1-3 modules' case-studies/*.md
+// --------------------------------------------------------------------------
+/** @type {Array<any>} */
+const caseStudies = [];
+
+for (const phase of PHASES) {
+  if (!['p1', 'p2', 'p3'].includes(phase.id)) continue;
+  const moduleDirs = listDirs(join(REPO_ROOT, phase.folder));
+  for (const moduleDir of moduleDirs) {
+    const csDir = join(REPO_ROOT, phase.folder, moduleDir, 'case-studies');
+    if (!exists(csDir)) continue;
+    const files = readdirSync(csDir)
+      .filter((f) => f.endsWith('.md'))
+      .sort();
+    for (const file of files) {
+      const md = read(join(csDir, file));
+      const slug = `${phase.id}-${stripOrderPrefix(moduleDir)}-${file.replace(/\.md$/, '')}`;
+      const heading = firstHeading(md);
+      const title = heading
+        ? heading.replace(/^Case Study:\s*/i, '').trim()
+        : humanize(file.replace(/\.md$/, ''));
+      caseStudies.push({
+        id: slug,
+        slug,
+        title,
+        phaseId: phase.id,
+        phaseTitle: phase.title,
+        moduleId: stripOrderPrefix(moduleDir),
+        moduleTitle: humanize(moduleDir),
+        moduleOrder: orderOf(moduleDir),
+        order: orderOf(file),
+        markdown: md,
+      });
+    }
+  }
+}
+
+caseStudies.sort((a, b) => {
+  if (phaseRank[a.phaseId] !== phaseRank[b.phaseId]) {
+    return phaseRank[a.phaseId] - phaseRank[b.phaseId];
+  }
+  if (a.moduleOrder !== b.moduleOrder) return a.moduleOrder - b.moduleOrder;
+  return a.order - b.order;
+});
+
+writeFileSync(
+  join(OUT_DIR, 'case-studies.json'),
+  JSON.stringify(caseStudies, null, 0),
+  'utf8',
+);
+
+// --------------------------------------------------------------------------
 // Summary
 // --------------------------------------------------------------------------
 const byPhase = designs.reduce((acc, d) => {
@@ -621,6 +673,7 @@ console.log('');
 console.log('-- Content extraction summary -----------------------------------');
 console.log(`Study sections: ${studySections.length}`);
 console.log(`Designs:        ${designs.length}`);
+console.log(`Case studies:   ${caseStudies.length}`);
 console.log(`Schedule days:  ${schedule.length}`);
 for (const phase of PHASES) {
   const c = byPhase[phase.id] || 0;

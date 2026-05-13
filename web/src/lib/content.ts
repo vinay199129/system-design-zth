@@ -8,8 +8,10 @@
 
 import sections from '@/generated/content.json';
 import designsRaw from '@/generated/designs.json';
+import caseStudiesRaw from '@/generated/case-studies.json';
 import scheduleRaw from '@/generated/schedule.json';
 import type {
+  CaseStudy,
   Design,
   Difficulty,
   Schedule,
@@ -19,6 +21,7 @@ import type {
 
 export const studySections = sections as StudySection[];
 export const designs = designsRaw as Design[];
+export const caseStudies = caseStudiesRaw as CaseStudy[];
 export const schedule = scheduleRaw as Schedule;
 
 export function findStudySection(slug: string): StudySection | undefined {
@@ -27,6 +30,27 @@ export function findStudySection(slug: string): StudySection | undefined {
 
 export function findDesign(slug: string): Design | undefined {
   return designs.find((d) => d.slug === slug);
+}
+
+export function findCaseStudy(slug: string): CaseStudy | undefined {
+  return caseStudies.find((c) => c.slug === slug);
+}
+
+export function caseStudiesByPhase(): Record<string, CaseStudy[]> {
+  const map: Record<string, CaseStudy[]> = {};
+  for (const c of caseStudies) {
+    (map[c.phaseId] ??= []).push(c);
+  }
+  return map;
+}
+
+export function caseStudiesByModule(
+  phaseId: string,
+  moduleId: string,
+): CaseStudy[] {
+  return caseStudies.filter(
+    (c) => c.phaseId === phaseId && c.moduleId === moduleId,
+  );
 }
 
 export function findDesignById(id: string): Design | undefined {
@@ -129,4 +153,4 @@ export function allModules(): Array<{
   return [...map.values()];
 }
 
-export type { Design, Difficulty, Schedule, ScheduleDay, StudySection };
+export type { CaseStudy, Design, Difficulty, Schedule, ScheduleDay, StudySection };

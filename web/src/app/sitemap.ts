@@ -1,5 +1,5 @@
 import type { MetadataRoute } from 'next';
-import { designs, studySections } from '@/lib/content';
+import { caseStudies, designs, studySections } from '@/lib/content';
 
 const SITE_URL = 'https://vinay199129.github.io/system-design-zth';
 
@@ -11,6 +11,7 @@ export default function sitemap(): MetadataRoute.Sitemap {
     '',
     '/study',
     '/designs',
+    '/case-studies',
     '/patterns',
     '/redo',
     '/review',
@@ -37,5 +38,12 @@ export default function sitemap(): MetadataRoute.Sitemap {
     priority: 0.5,
   }));
 
-  return [...staticRoutes, ...studyRoutes, ...designRoutes];
+  const caseStudyRoutes: MetadataRoute.Sitemap = caseStudies.map((c) => ({
+    url: `${SITE_URL}/case-studies/${c.slug}`,
+    lastModified: now,
+    changeFrequency: 'monthly' as const,
+    priority: 0.5,
+  }));
+
+  return [...staticRoutes, ...studyRoutes, ...designRoutes, ...caseStudyRoutes];
 }
